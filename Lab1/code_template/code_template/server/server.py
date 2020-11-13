@@ -48,6 +48,7 @@ class Server(Bottle):
         # we give access to the templates elements
         self.get('/templates/<filename:path>', callback=self.get_template)
         self.post('/board/<element_id:int>/', callback=self.delete)
+        self.post('/propagate', callback=self.post_propagate)
         # You can have variables in the URI, here's an example
         # self.post('/board/<element_id:int>/', callback=self.post_board) where post_board takes an argument (integer) called element_id
 
@@ -101,6 +102,22 @@ class Server(Bottle):
                 success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
+                    
+    # post to ('/propagate')
+    def post_propagate(self):
+        action = request.forms.get('action')
+        
+        if action == 'submit':
+            entry = request.forms.get('entry')
+            self.blackboard.add_content(entry)
+        elif action == 'delete':
+            element_id = request.forms.get('element_id')
+            print("delete request receieved: " + (element_id))
+            self.blackboard.get_content().pop(int(element_id))
+        elif action == 'modify':
+            element_id = request.forms.get('element_id')
+            mod_entry = request.forms.get('mod_entry')
+            self.blackboard.get_content() [int(element_id)] = mod_entry
 
 
     # route to ('/')
@@ -137,6 +154,11 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             print("Received: {}".format(new_entry))
             self.blackboard.add_content(new_entry)
+            
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate', 'POST',
+                                        {'action': 'submit', 'entry': new_entry}))
+            
         except Exception as e:
             print("[ERROR] "+str(e))
         #bottle.TEMPLATES.clear()
@@ -147,9 +169,15 @@ class Server(Bottle):
         print("DeletE OR modify? " + d)
         if d== "1":
             self.blackboard.get_content().pop(element_id)
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate', 'POST',
+                                        {'action': 'delete', 'element_id': element_id}))
         else:
             mod_entry = request.forms.get('entry')
             self.blackboard.get_content() [element_id] = mod_entry
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate', 'POST',
+                                        {'action': 'modify','element_id': element_id, 'mod_entry': mod_entry}))
 
 
     def get_template(self, filename):
