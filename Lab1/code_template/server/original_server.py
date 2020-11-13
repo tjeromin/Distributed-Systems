@@ -12,11 +12,10 @@ import requests
 
 # ------------------------------------------------------------------------------------------------------
 
-class Blackboard:
+class Blackboard():
 
     def __init__(self):
-        self.content = dict()
-        self.count = len(self.content)
+        self.content = ""
         self.lock = Lock()  # use lock when you modify the content
 
     def get_content(self):
@@ -24,18 +23,9 @@ class Blackboard:
             cnt = self.content
         return cnt
 
-    def set_content(self, index, new_content):
+    def set_content(self, new_content):
         with self.lock:
-            if index not in self.content:
-                self.count += 1
-                if index is None:
-                    index = self.count - 1
-            self.content[index] = new_content
-        return
-
-    def del_content(self, index):
-        with self.lock:
-            self.content.pop(index)
+            self.content = new_content
         return
 
 
@@ -52,18 +42,16 @@ class Server(Bottle):
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
         self.get('/board', callback=self.get_board)
-        self.post('/board', callback=self.post_board)
-        self.post('/board/<element_id>/', callback=self.post_modify)
+        self.post('/', callback=self.post_index)
         # we give access to the templates elements
         self.get('/templates/<filename:path>', callback=self.get_template)
-        self.post('/propagate', callback=self.post_propagate)
-        # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
-        # callback=self.post_board) where post_board takes an argument (integer) called element_id
+        # You can have variables in the URI, here's an example
+        # self.post('/board/<element_id:int>/', callback=self.post_board) where post_board takes an argument (integer) called element_id
 
     def do_parallel_task(self, method, args=None):
-        # create a thread running a new task Usage example: self.do_parallel_task(self.contact_another_server,
-        # args=("10.1.0.2", "/index", "POST", params_dict)) this would start a thread sending a post request to
-        # server 10.1.0.2 with URI /index and with params params_dict
+        # create a thread running a new task
+        # Usage example: self.do_parallel_task(self.contact_another_server, args=("10.1.0.2", "/index", "POST", params_dict))
+        # this would start a thread sending a post request to server 10.1.0.2 with URI /index and with params params_dict
         thread = Thread(target=method,
                         args=args)
         thread.daemon = True
@@ -99,28 +87,18 @@ class Server(Bottle):
             print("[ERROR] " + str(e))
         return success
 
-    def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
+    def propagate_to_all_servers(self, URI, req='POST', params_dict=None):
         for srv_ip in self.servers_list:
             if srv_ip != self.ip:  # don't propagate to yourself
                 success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
 
-    # post to ('/propagate')
-    def post_propagate(self):
-        element_id = request.forms.get('element_id')
-        entry = request.forms.get('entry')
-        delete = request.forms.get('delete')
-        if delete == '1':
-            self.blackboard.del_content(element_id)
-        else:
-            self.blackboard.set_content(element_id, entry)
-
     # route to ('/')
     def index(self):
-        # we must transform the blackboard as a dict for compatibility reasons
+        # we must transform the blackboard as a dict for compatiobility reasons
         board = dict()
-        board = self.blackboard.get_content()
+        board["0"] = self.blackboard.get_content()
         return template('server/templates/index.tpl',
                         board_title='Server {} ({})'.format(self.id,
                                                             self.ip),
@@ -131,40 +109,18 @@ class Server(Bottle):
     def get_board(self):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
-        board = self.blackboard.get_content()
+        board["0"] = self.blackboard.get_content()
         return template('server/templates/blackboard.tpl',
                         board_title='Server {} ({})'.format(self.id,
                                                             self.ip),
                         board_dict=board.items())
 
-    # post on ('/board')
-    def post_board(self):
+    # post on ('/')
+    def post_index(self):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            element_id = request.forms.get('id')
-            self.blackboard.set_content(index=element_id, new_content=new_entry)
             print("Received: {}".format(new_entry))
-            self.do_parallel_task(self.propagate_to_all_servers,
-                                  args=('/propagate', 'POST',
-                                        {'delete': '0', 'element_id': element_id, 'entry': new_entry}))
-        except Exception as e:
-            print("[ERROR] " + str(e))
-
-    # post on ('/board/<element_id:int>/')
-    def post_modify(self, element_id: str):
-        try:
-            # we read the POST form, and check for an element called 'entry'
-            new_entry = request.forms.get('entry')
-            delete = request.forms.get('delete')
-            if delete == '0':
-                self.blackboard.set_content(index=element_id, new_content=new_entry)
-            else:
-                self.blackboard.del_content(index=element_id)
-            print("Received: {}".format(new_entry))
-            self.do_parallel_task(self.propagate_to_all_servers,
-                                  args=('/propagate', 'POST',
-                                        {'delete': delete, 'element_id': element_id, 'entry': new_entry}))
         except Exception as e:
             print("[ERROR] " + str(e))
 
