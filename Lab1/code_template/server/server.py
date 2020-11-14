@@ -133,7 +133,7 @@ class Server(Bottle):
                         board_title='Server {} ({})'.format(self.id,
                                                             self.ip),
                         board_dict=board.items(),
-                        members_name_string='INPUT YOUR NAME HERE')
+                        members_name_string='Lorenz Meierhofer and Tino Jeromin')
 
     # get on ('/board')
     def get_board(self):
