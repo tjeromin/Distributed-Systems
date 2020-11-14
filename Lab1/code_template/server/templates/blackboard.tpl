@@ -1,4 +1,4 @@
-                    <div id="boardcontents_placeh123older">
+                    <div id="boardcontents_placeholder">
                     <div class="row">
                     <!-- this place will show the actual contents of the blackboard. 
                     It will be reloaded automatically from the server -->

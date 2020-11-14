@@ -16,7 +16,7 @@ class Blackboard:
 
     def __init__(self):
         self.content = dict()
-        self.count = len(self.content)
+        self.counter = 0
         self.lock = Lock()  # use lock when you modify the content
 
     def get_content(self):
@@ -24,12 +24,18 @@ class Blackboard:
             cnt = self.content
         return cnt
 
+    def add_content(self, new_entry):
+        with self.lock:
+            self.content[self.counter] = new_entry
+            self.counter += 1
+        return
+
     def set_content(self, index, new_content):
         with self.lock:
             if index not in self.content:
-                self.count += 1
+                self.counter += 1
                 if index is None:
-                    index = self.count - 1
+                    index = self.counter - 1
             self.content[index] = new_content
         return
 
@@ -53,7 +59,7 @@ class Server(Bottle):
         self.route('/', callback=self.index)
         self.get('/board', callback=self.get_board)
         self.post('/board', callback=self.post_board)
-        self.post('/board/<element_id>/', callback=self.post_modify)
+        self.post('/board/<element_id:int>/', callback=self.post_modify)
         # we give access to the templates elements
         self.get('/templates/<filename:path>', callback=self.get_template)
         self.post('/propagate', callback=self.post_propagate)
@@ -112,9 +118,11 @@ class Server(Bottle):
         entry = request.forms.get('entry')
         delete = request.forms.get('delete')
         if delete == '1':
-            self.blackboard.del_content(element_id)
+            self.blackboard.del_content(int(element_id))
+        elif element_id is None:
+            self.blackboard.add_content(new_entry=entry)
         else:
-            self.blackboard.set_content(element_id, entry)
+            self.blackboard.set_content(index=int(element_id), new_content=entry)
 
     # route to ('/')
     def index(self):
@@ -132,6 +140,7 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
+        print(self.blackboard.get_content())
         return template('server/templates/blackboard.tpl',
                         board_title='Server {} ({})'.format(self.id,
                                                             self.ip),
@@ -142,17 +151,16 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            element_id = request.forms.get('id')
-            self.blackboard.set_content(index=element_id, new_content=new_entry)
+            self.blackboard.add_content(new_entry=new_entry)
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate', 'POST',
-                                        {'delete': '0', 'element_id': element_id, 'entry': new_entry}))
+                                        {'delete': '0', 'element_id': None, 'entry': new_entry}))
         except Exception as e:
             print("[ERROR] " + str(e))
 
-    # post on ('/board/<element_id:int>/')
-    def post_modify(self, element_id: str):
+    # post on ('/board/<element_id>/')
+    def post_modify(self, element_id):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
