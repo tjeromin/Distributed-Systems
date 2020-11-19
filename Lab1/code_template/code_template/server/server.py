@@ -23,12 +23,25 @@ class Blackboard():
             cnt = self.content
         return cnt
 
-
+    # add entry to blackboard dict
     def add_content(self, new_content):
         with self.lock:
             self.content [self.counter] = new_content
             self.counter += 1
         return
+    
+    # modify entry
+    def modify_content(self, element_id, mod_entry):
+        with self.lock:
+            self.content [element_id] = mod_entry
+        return
+    
+    # delete entry
+    def delete_entry(self, element_id):
+        with self.lock:
+            self.content.pop(element_id)
+        return
+        
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -44,7 +57,7 @@ class Server(Bottle):
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
         self.get('/board', callback=self.get_board)
-        self.post('/board', callback=self.post_index)
+        self.post('/board', callback=self.post_board)
         # we give access to the templates elements
         self.get('/templates/<filename:path>', callback=self.get_template)
         self.post('/board/<element_id:int>/', callback=self.delete)
@@ -122,8 +135,6 @@ class Server(Bottle):
 
     # route to ('/')
     def index(self):
-        print("hhhhhhhhhhhhhhhhhhh2")
-        # we must transform the blackboard as a dict for compatiobility reasons
         board = dict()
         board = self.blackboard.get_content()
         return template('server/templates/index.tpl',
@@ -134,8 +145,6 @@ class Server(Bottle):
 
     # get on ('/board')
     def get_board(self):
-        print("hhhhhhhhhhhhhhhhhhh3")
-        # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
         print(board.items())
@@ -146,13 +155,12 @@ class Server(Bottle):
 
 
     # post on ('/board')
-    def post_index(self):
-        print("hhhhhhhhhhhhhhhhhhh1")
+    def post_board(self):
         try:
             # we read the POST form, and check for an element called 'entry'
-            
             new_entry = request.forms.get('entry')
             print("Received: {}".format(new_entry))
+            # bottle.TEMPLATES.clear()
             self.blackboard.add_content(new_entry)
             
             self.do_parallel_task(self.propagate_to_all_servers,
@@ -161,20 +169,18 @@ class Server(Bottle):
             
         except Exception as e:
             print("[ERROR] "+str(e))
-        #bottle.TEMPLATES.clear()
-        #self.get_board()
+        # self.get_board()
         
     def delete(self, element_id):
         d = request.forms.get('delete')
-        print("DeletE OR modify? " + d)
         if d== "1":
-            self.blackboard.get_content().pop(element_id)
+            self.blackboard.delete_entry(element_id)
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate', 'POST',
                                         {'action': 'delete', 'element_id': element_id}))
         else:
             mod_entry = request.forms.get('entry')
-            self.blackboard.get_content() [element_id] = mod_entry
+            self.blackboard.modify_content(element_id, mod_entry)
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate', 'POST',
                                         {'action': 'modify','element_id': element_id, 'mod_entry': mod_entry}))
