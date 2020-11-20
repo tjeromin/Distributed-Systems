@@ -8,6 +8,7 @@ import traceback
 import bottle
 from bottle import Bottle, request, template, run, static_file
 import requests
+import random
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -53,10 +54,13 @@ class Server(Bottle):
         self.blackboard = Blackboard()
         self.id = int(ID)
         self.ip = str(IP)
-        self.servers_list = servers_list
+        self.rnd_number = random.randint(0, 10 ** 6)
+        # dictionary of server_ip, rnd_number pairs
+        self.servers_list = dict.fromkeys(servers_list, None)
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
+        self.post('/init', callback=self.post_init)
         self.get('/board', callback=self.get_board)
         self.post('/board', callback=self.post_board)
         self.post('/board/<element_id:int>/', callback=self.post_modify)
@@ -65,6 +69,9 @@ class Server(Bottle):
         self.post('/propagate', callback=self.post_propagate)
         # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
         # callback=self.post_board) where post_board takes an argument (integer) called element_id
+        self.do_parallel_task_after_delay(5, self.propagate_to_all_servers,
+                                          args=('/init', 'POST',
+                                                {'ip': self.ip, 'rnd_number': self.rnd_number}))
 
     def do_parallel_task(self, method, args=None):
         # create a thread running a new task Usage example: self.do_parallel_task(self.contact_another_server,
@@ -111,6 +118,12 @@ class Server(Bottle):
                 success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
+
+    def post_init(self):
+        rnd_number = request.forms.get('rnd_number')
+        ip = request.forms.get('ip')
+        self.servers_list[ip] = rnd_number
+        print('server ' + str(ip) + ': ' + str(rnd_number))
 
     # post to ('/propagate')
     def post_propagate(self):
