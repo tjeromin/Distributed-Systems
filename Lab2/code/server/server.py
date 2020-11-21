@@ -22,13 +22,16 @@ class Blackboard():
         with self.lock:
             cnt = self.content
         return cnt
+    
+    def increment_counter(self):
+        self.counter += 1
+        return self.counter
 
     # add entry to blackboard dict
-    def add_content(self, new_content):
+    def add_content(self, new_content, id):
         with self.lock:
-            self.content [self.counter] = new_content
-            self.counter += 1
-        return
+            self.content [id] = new_content
+        return self.counter
     
     # modify entry
     def modify_content(self, element_id, mod_entry):
@@ -62,6 +65,18 @@ class Server(Bottle):
         self.get('/templates/<filename:path>', callback=self.get_template)
         self.post('/board/<element_id:int>/', callback=self.delete)
         self.post('/propagate', callback=self.post_propagate)
+        self.post('/leader_election', callback=self.post_leader_election)
+        if IP == servers_list[len(servers_list) - 1]:
+            self.leader = True
+            self.initiate_election()
+        else:
+            self.leader = False
+        self.leader_ip = servers_list[len(servers_list) - 1]
+        
+        if self.leader:
+            print("I am the leader")
+        else:
+            print("I follow " + self.leader_ip)
         # You can have variables in the URI, here's an example
         # self.post('/board/<element_id:int>/', callback=self.post_board) where post_board takes an argument (integer) called element_id
 
@@ -108,6 +123,12 @@ class Server(Bottle):
             print("[ERROR] "+str(e))
         return success
 
+    def propagate_to_leader(self, URI, req='POST', params_dict=None):
+        success = self.contact_another_server(self.leader_ip, URI, req, params_dict)
+        if not success:
+            print("[WARNING ]Could not contact server {}".format(srv_ip))
+            # initiate election
+        
 
     def propagate_to_all_servers(self, URI, req='POST', params_dict=None):
         for srv_ip in self.servers_list:
@@ -115,11 +136,44 @@ class Server(Bottle):
                 success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
+       
+    # post to ('/leader_election')
+    def post_leader_election(self):
+        flag = request.forms.get('flag')
+        print("election flag received: " + flag)
+    
+    # test election posting
+    def initiate_election(self):
+        print("initiating election")
+        self.do_parallel_task_after_delay(6, self.propagate_to_all_servers,
+                                  args=('/leader_election', 'POST',
+                                        {'flag': 'rec'}))
+        #self.propagate_to_all_servers,('/leader_election', 'POST',
+         #                               {'flag': 'rec'})
+        
                     
     # post to ('/propagate')
     def post_propagate(self):
         action = request.forms.get('action')
+        # only at leader
+        if action == 'submit':
+            print("at leader")
+            entry = request.forms.get('entry')
+            counter = self.blackboard.increment_counter()
+            # waiting for all to return when spreading content
+            self.propagate_to_all_servers('/propagate', 'POST',
+                                        {'action': 'sync_content', 'sync_content': entry, 'element_id': counter})
+            self.blackboard.add_content(entry, counter)
+        # only at follower
+        elif action == 'sync_content':
+            print("at follower")
+            sync_content = request.forms.get('sync_content')
+            element_id = request.forms.get('element_id')
+            self.blackboard.add_content(sync_content, element_id)
+            
+            
         
+        '''
         if action == 'submit':
             entry = request.forms.get('entry')
             self.blackboard.add_content(entry)
@@ -130,7 +184,7 @@ class Server(Bottle):
         elif action == 'modify':
             element_id = request.forms.get('element_id')
             mod_entry = request.forms.get('mod_entry')
-            self.blackboard.get_content() [int(element_id)] = mod_entry
+            self.blackboard.get_content() [int(element_id)] = mod_entry'''
 
 
     # route to ('/')
@@ -159,18 +213,15 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            print("Received: {}".format(new_entry))
-            # bottle.TEMPLATES.clear()
-            self.blackboard.add_content(new_entry)
-            
-            self.do_parallel_task(self.propagate_to_all_servers,
+            print("Received: {}".format(new_entry))            
+            self.do_parallel_task(self.propagate_to_leader,
                                   args=('/propagate', 'POST',
                                         {'action': 'submit', 'entry': new_entry}))
-            
         except Exception as e:
             print("[ERROR] "+str(e))
-        # self.get_board()
-        
+            
+            
+    # delete or modify entry    
     def delete(self, element_id):
         d = request.forms.get('delete')
         if d== "1":
