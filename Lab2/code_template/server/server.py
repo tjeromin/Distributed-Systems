@@ -29,7 +29,7 @@ class Blackboard:
 
     def add_content(self, new_entry):
         with self.lock:
-            self.content[self.counter] = new_entry
+            self.content[str(self.counter)] = new_entry
             self.counter += 1
         return
 
@@ -71,6 +71,7 @@ class Server(Bottle):
         # we give access to the templates elements
         self.get('/templates/<filename:path>', callback=self.get_template)
         self.post('/propagate', callback=self.post_propagate)
+        self.post('/propagate_leader', callback=self.post_propagate_leader)
         self.post('/leader_election', callback=self.post_leader_election)
         # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
         # callback=self.post_board) where post_board takes an argument (integer) called element_id
@@ -150,16 +151,12 @@ class Server(Bottle):
         elif action == 'coordination':
             if servers_str[-1] == '|':
                 servers_str = servers_str[:-1]
-            print(servers_str)
             servers_list = servers_str.split('|')
-            print(servers_list)
+            # list of all server_ip's
             ip_list = servers_list[0::2]
-            print(ip_list)
+            # list of all rnd_number's
             rnd_list = [int(i) for i in servers_list[1::2]]
-            print(rnd_list)
             # make a dictionary of shape server_ip: (rnd_number, next_ip)
-            # self.servers_dict = {ip_list[i]: (rnd_list[i], ip_list[(i + 1) % len(ip_list)])
-                                 # for i in range(0, len(ip_list))}
             for i in range(0, len(ip_list)):
                 self.servers_dict[ip_list[i]] = (rnd_list[i], ip_list[(i + 1) % len(ip_list)])
             # get a list of all indices of rnd_list where rnd_number max is
@@ -178,7 +175,6 @@ class Server(Bottle):
                                              'servers_dict': servers_str,
                                              'initiator_ip': init_ip}))
 
-
     def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
         for srv_ip in self.servers_dict:
             if srv_ip != self.ip:  # don't propagate to yourself
@@ -192,22 +188,42 @@ class Server(Bottle):
             print('[WARNING ]Could not contact leader.')
             # initiate election
 
-    # post to ('/propagate')
-    def post_propagate(self):
+    # post to ('/propagate_leader')
+    def post_propagate_leader(self):
         action = request.forms.get('action')
-        # only at leader
+
         if action == 'submit':
-            print("at leader")
             entry = request.forms.get('entry')
             # waiting for all to return when spreading content
             self.propagate_to_all_servers('/propagate', 'POST',
-                                          {'action': 'sync_content', 'sync_content': entry})
+                                          {'action': 'submit', 'entry': entry})
             self.blackboard.add_content(entry)
-        # only at follower
-        elif action == 'sync_content':
-            print("at follower")
-            sync_content = request.forms.get('sync_content')
+        elif action == 'modify':
+            entry = request.forms.get('entry')
+            element_id = request.forms.get('element_id')
+            self.propagate_to_all_servers('/propagate', 'POST',
+                                          {'action': 'modify', 'element_id': element_id, 'entry': entry})
+            self.blackboard.set_content(element_id, entry)
+        elif action == 'delete':
+            element_id = request.forms.get('element_id')
+            self.propagate_to_all_servers('/propagate', 'POST',
+                                          {'action': 'delete', 'element_id': element_id})
+            self.blackboard.del_content(element_id)
+
+    # post to ('/propagate')
+    def post_propagate(self):
+        action = request.forms.get('action')
+
+        if action == 'submit':
+            sync_content = request.forms.get('entry')
             self.blackboard.add_content(sync_content)
+        elif action == 'modify':
+            entry = request.forms.get('entry')
+            element_id = request.forms.get('element_id')
+            self.blackboard.set_content(element_id, entry)
+        elif action == 'delete':
+            element_id = request.forms.get('element_id')
+            self.blackboard.del_content(element_id)
 
     # route to ('/')
     def index(self):
@@ -238,7 +254,7 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_leader,
-                                  args=('/propagate', 'POST',
+                                  args=('/propagate_leader', 'POST',
                                         {'action': 'submit', 'entry': new_entry}))
         except Exception as e:
             print("[ERROR] " + str(e))
@@ -249,14 +265,15 @@ class Server(Bottle):
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
             delete = request.forms.get('delete')
-            if delete == '0':
-                self.blackboard.set_content(index=element_id, new_content=new_entry)
+
+            if delete == '1':
+                action = 'delete'
             else:
-                self.blackboard.del_content(index=element_id)
+                action = 'modify'
             print("Received: {}".format(new_entry))
-            self.do_parallel_task(self.propagate_to_all_servers,
-                                  args=('/propagate', 'POST',
-                                        {'delete': delete, 'element_id': element_id, 'entry': new_entry}))
+            self.do_parallel_task(self.propagate_to_leader,
+                                  args=('/propagate_leader', 'POST',
+                                        {'action': action, 'element_id': element_id, 'entry': new_entry}))
         except Exception as e:
             print("[ERROR] " + str(e))
 
