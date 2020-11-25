@@ -107,19 +107,22 @@ class Server(Bottle):
     def contact_another_server(self, srv_ip, URI, req='POST', params_dict=None):
         # Try to contact another server through a POST or GET
         # usage: server.contact_another_server("10.1.1.1", "/index", "POST", params_dict)
+        start = time.time()
+        timeout = 5.
         success = False
-        try:
-            res = 0
-            if 'POST' in req:
-                res = requests.post('http://{}{}'.format(srv_ip, URI),
-                                    data=params_dict)
-            elif 'GET' in req:
-                res = requests.get('http://{}{}'.format(srv_ip, URI))
-            # result can be accessed res.json()
-            if res.status_code == 200:
-                success = True
-        except Exception as e:
-            print("[ERROR] " + str(e))
+        while not success and time.time() - start <= timeout:
+            try:
+                res = 0
+                if 'POST' in req:
+                    res = requests.post('http://{}{}'.format(srv_ip, URI),
+                                        data=params_dict)
+                elif 'GET' in req:
+                    res = requests.get('http://{}{}'.format(srv_ip, URI))
+                # result can be accessed res.json()
+                if res.status_code == 200:
+                    success = True
+            except Exception as e:
+                print("[ERROR] " + str(e))
         return success
 
     def start_leader_election(self):
@@ -129,6 +132,16 @@ class Server(Bottle):
                               args=(self.next_ip[0], '/leader_election', 'POST',
                                     {'action': 'election', 'servers_dict': servers_str, 'initiator_ip': self.ip}))
 
+    def send_election_message(self, action, servers_str, init_ip):
+        success = self.contact_another_server(self.next_ip[0], '/leader_election', 'POST',
+                                              {'action': action,
+                                               'servers_dict': servers_str,
+                                               'initiator_ip': init_ip})
+        if not success:
+            self.servers_dict[self.ip] = (self.rnd_number, self.servers_dict[self.servers_dict[self.ip][1]][1])
+            self.next_ip[0] = self.servers_dict[self.ip][1]
+            self.send_election_message(action, servers_str, init_ip)
+
     def post_leader_election(self):
         action = request.forms.get('action')
         servers_str = request.forms.get('servers_dict')
@@ -137,18 +150,10 @@ class Server(Bottle):
         if action == 'election':
             print('election')
             if init_ip == self.ip:
-                self.do_parallel_task(self.contact_another_server,
-                                      args=(self.next_ip[0], '/leader_election', 'POST',
-                                            {'action': 'coordination',
-                                             'servers_dict': servers_str,
-                                             'initiator_ip': init_ip}))
+                action = 'coordination'
             else:
                 servers_str += str(self.ip) + '|' + str(self.rnd_number) + '|'
-                self.do_parallel_task(self.contact_another_server,
-                                      args=(self.next_ip[0], '/leader_election', 'POST',
-                                            {'action': 'election',
-                                             'servers_dict': servers_str,
-                                             'initiator_ip': init_ip}))
+            self.do_parallel_task(self.send_election_message, args=(action, servers_str, init_ip))
         elif action == 'coordination':
             if servers_str[-1] == '|':
                 servers_str = servers_str[:-1]
@@ -179,23 +184,16 @@ class Server(Bottle):
     def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
         for srv_ip in self.servers_dict:
             if srv_ip != self.ip:  # don't propagate to yourself
-                start = time.time()
-                timeout = 5.
-                success = False
-                while not success and time.time() - start <= timeout:
-                    success = self.contact_another_server(srv_ip, URI, req, params_dict)
+                success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
-                    print("[WARNING ]Could not contact server {} after {}s".format(srv_ip, timeout))
+                    print("[WARNING ]Could not contact server {}".format(srv_ip))
 
     def propagate_to_leader(self, URI, req='POST', params_dict=None):
-        start = time.time()
-        timeout = 5.
-        success = False
-        while not success and time.time() - start <= timeout:
-            success = self.contact_another_server(self.leader_ip[0], URI, req, params_dict)
+        success = self.contact_another_server(self.leader_ip[0], URI, req, params_dict)
         if not success:
-            print("[WARNING ]Could not contact leader {} after {}s. \nStarting election".format(
-                self.leader_ip[0], timeout))
+            print("[WARNING ]Could not contact leader {}. \nStarting election".format(
+                self.leader_ip[0]))
+            self.start_leader_election()
 
     # post to ('/propagate_leader')
     def post_propagate_leader(self):
