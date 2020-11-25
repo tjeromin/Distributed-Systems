@@ -1,35 +1,45 @@
-import threading
+# coding=utf-8
+import argparse
+import json
+import sys
 from threading import Lock, Thread
+import time
+import traceback
 import bottle
 from bottle import Bottle, request, template, run, static_file
 import requests
 
 
-class MessageThread(threading.Thread):
-    def __init__(self, ip, message):
-        threading.Thread.__init__(self)
-        self.ip = ip
-        self.message = message
-
-    def run(self):
-        self.send_message(self.ip, self.message)
-
-    def send_message(self, ip, entry):
-        try:
-            res = requests.post('http://{}/board'.format(ip), data={'entry': entry})
-
-            # result can be accessed res.json()
-            if res.status_code == 200:
-                print('success {}'.format(self.ip))
-        except Exception as e:
-            print("[ERROR] " + str(e))
+# ------------------------------------------------------------------------------------------------------
 
 
-ip1 = '10.1.0.1'
-ip2 = '10.1.0.2'
+def post(server_id, msg_id):
+    res = requests.post('http://10.1.0.{}{}'.format(server_id, '/board'),
+                        {'entry': "hello from script (msg_id: " + str(msg_id) + ") at server " + str(server_id)})
 
-for i in range(0, 5, 1):
-    t1 = MessageThread(ip1, 'server 1 message {}'.format(str(i)))
-    t2 = MessageThread(ip2, 'server 2 message {}'.format(str(i)))
-    t1.start()
-    t2.start()
+
+def modify(server_id):
+    res = requests.post('http://10.1.0.{}{}'.format(server_id, '/board/3/'),
+                        {'entry': "modified at server " + str(server_id), 'delete': '0'})
+
+
+def do_parallel_task(method, args=None):
+    thread = Thread(target=method,
+                    args=args)
+    thread.daemon = False
+    thread.start()
+
+
+def post_from_all_servers():
+    for msg in range(1):
+        for server in range(8):
+            do_parallel_task(post, args=(server + 1, msg + 1))
+
+
+def modify_from_each_server():
+    for server in range(8):
+        do_parallel_task(modify, args=(server + 1,))
+
+
+post_from_all_servers();
+# modify_from_each_server();

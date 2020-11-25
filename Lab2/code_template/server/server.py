@@ -22,23 +22,24 @@ class Blackboard:
         self.counter = 0
         self.lock = Lock()  # use lock when you modify the content
 
-    def get_content(self):
+    def get_content(self) -> dict:
         with self.lock:
             cnt = self.content
         return cnt
 
-    def add_content(self, new_entry):
+    def add_content(self, new_entry: str) -> str:
         with self.lock:
             self.content[str(self.counter)] = new_entry
+            element_id = str(self.counter)
             self.counter += 1
-        return
+        return element_id
 
-    def set_content(self, index, new_content):
+    def set_content(self, index: str, new_content: str):
         with self.lock:
             self.content[index] = new_content
         return
 
-    def del_content(self, index):
+    def del_content(self, index: str):
         with self.lock:
             self.content.pop(index)
         return
@@ -178,15 +179,23 @@ class Server(Bottle):
     def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
         for srv_ip in self.servers_dict:
             if srv_ip != self.ip:  # don't propagate to yourself
-                success = self.contact_another_server(srv_ip, URI, req, params_dict)
+                start = time.time()
+                timeout = 5.
+                success = False
+                while not success and time.time() - start <= timeout:
+                    success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
-                    print("[WARNING ]Could not contact server {}".format(srv_ip))
+                    print("[WARNING ]Could not contact server {} after {}s".format(srv_ip, timeout))
 
     def propagate_to_leader(self, URI, req='POST', params_dict=None):
-        success = self.contact_another_server(self.leader_ip[0], URI, req, params_dict)
+        start = time.time()
+        timeout = 5.
+        success = False
+        while not success and time.time() - start <= timeout:
+            success = self.contact_another_server(self.leader_ip[0], URI, req, params_dict)
         if not success:
-            print('[WARNING ]Could not contact leader.')
-            # initiate election
+            print("[WARNING ]Could not contact leader {} after {}s. \nStarting election".format(
+                self.leader_ip[0], timeout))
 
     # post to ('/propagate_leader')
     def post_propagate_leader(self):
@@ -194,35 +203,37 @@ class Server(Bottle):
 
         if action == 'submit':
             entry = request.forms.get('entry')
+            element_id = self.blackboard.add_content(entry)
             # waiting for all to return when spreading content
-            self.propagate_to_all_servers('/propagate', 'POST',
-                                          {'action': 'submit', 'entry': entry})
-            self.blackboard.add_content(entry)
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate', 'POST',
+                                        {'action': 'submit', 'entry': entry, 'element_id': element_id}))
         elif action == 'modify':
             entry = request.forms.get('entry')
             element_id = request.forms.get('element_id')
-            self.propagate_to_all_servers('/propagate', 'POST',
-                                          {'action': 'modify', 'element_id': element_id, 'entry': entry})
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate', 'POST',
+                                        {'action': 'modify', 'element_id': element_id, 'entry': entry}))
             self.blackboard.set_content(element_id, entry)
         elif action == 'delete':
             element_id = request.forms.get('element_id')
-            self.propagate_to_all_servers('/propagate', 'POST',
-                                          {'action': 'delete', 'element_id': element_id})
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate', 'POST',
+                                        {'action': 'delete', 'element_id': element_id}))
             self.blackboard.del_content(element_id)
 
     # post to ('/propagate')
     def post_propagate(self):
         action = request.forms.get('action')
+        element_id = request.forms.get('element_id')
 
         if action == 'submit':
-            sync_content = request.forms.get('entry')
-            self.blackboard.add_content(sync_content)
+            entry = request.forms.get('entry')
+            self.blackboard.set_content(element_id, entry)
         elif action == 'modify':
             entry = request.forms.get('entry')
-            element_id = request.forms.get('element_id')
             self.blackboard.set_content(element_id, entry)
         elif action == 'delete':
-            element_id = request.forms.get('element_id')
             self.blackboard.del_content(element_id)
 
     # route to ('/')
@@ -230,9 +241,10 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
+        role = 'leader' if self.leader_ip[0] == self.ip else 'follower'
         return template('server/templates/index.tpl',
-                        board_title='Server {} ({})'.format(self.id,
-                                                            self.ip),
+                        board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
+                                                                         self.rnd_number, role),
                         board_dict=board.items(),
                         members_name_string='Lorenz Meierhofer and Tino Jeromin')
 
@@ -241,10 +253,10 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
-        print(self.blackboard.get_content())
+        role = 'leader' if self.leader_ip[0] == self.ip else 'follower'
         return template('server/templates/blackboard.tpl',
-                        board_title='Server {} ({})'.format(self.id,
-                                                            self.ip),
+                        board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
+                                                                         self.rnd_number, role),
                         board_dict=board.items())
 
     # post on ('/board')
