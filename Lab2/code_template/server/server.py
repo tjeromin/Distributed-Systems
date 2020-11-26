@@ -76,11 +76,6 @@ class Server(Bottle):
         self.post('/leader_election', callback=self.post_leader_election)
         # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
         # callback=self.post_board) where post_board takes an argument (integer) called element_id
-        time.sleep(2)
-        print('id ' + str(self.id))
-        if self.id == 1:
-            print('sending')
-            self.start_leader_election()
 
     def do_parallel_task(self, method, args=None):
         # create a thread running a new task Usage example: self.do_parallel_task(self.contact_another_server,
@@ -138,6 +133,7 @@ class Server(Bottle):
                                                'servers_dict': servers_str,
                                                'initiator_ip': init_ip})
         if not success:
+            # Set own next_ip to the next server's next_ip in the ring
             self.servers_dict[self.ip] = (self.rnd_number, self.servers_dict[self.servers_dict[self.ip][1]][1])
             self.next_ip[0] = self.servers_dict[self.ip][1]
             self.send_election_message(action, servers_str, init_ip)
@@ -158,6 +154,7 @@ class Server(Bottle):
             if servers_str[-1] == '|':
                 servers_str = servers_str[:-1]
             servers_list = servers_str.split('|')
+            # [ip1, rnd1, ip2, rnd2, ...]
             # list of all server_ip's
             ip_list = servers_list[0::2]
             # list of all rnd_number's
@@ -315,6 +312,7 @@ def main():
         server = Server(server_id,
                         server_ip,
                         servers_list)
+        server.do_parallel_task_after_delay(delay=2, method=server.start_leader_election, args=[])
         bottle.run(server,
                    host=server_ip,
                    port=PORT)

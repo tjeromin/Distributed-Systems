@@ -31,7 +31,7 @@ def do_parallel_task(method, args=None):
 
 
 def post_from_all_servers():
-    for msg in range(1):
+    for msg in range(5):
         for server in range(8):
             do_parallel_task(post, args=(server + 1, msg + 1))
 
