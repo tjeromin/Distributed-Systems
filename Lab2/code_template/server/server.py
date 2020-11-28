@@ -46,6 +46,27 @@ class Blackboard:
 
 
 # ------------------------------------------------------------------------------------------------------
+class ServerDict(dict):
+    """ Dictionary of shape server_ip: (rnd_number, next_ip).
+        Stores all servers' ip addresses in the ring with its rnd_number and its successor's ip address
+    """
+
+    def __init__(self, ip, rnd_number):
+        super().__init__()
+        self.__ip = ip
+        self.__rnd_number = rnd_number
+        self.leader_ip = None
+
+    @property
+    def next_ip(self):
+        return self.__getitem__(self.__ip)[1]
+
+    @next_ip.setter
+    def next_ip(self, value: str):
+        self.__setitem__(self.__ip, (self.__rnd_number, value))
+
+
+# ------------------------------------------------------------------------------------------------------
 class Server(Bottle):
 
     def __init__(self, ID, IP, servers_list):
