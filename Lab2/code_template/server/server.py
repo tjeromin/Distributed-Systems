@@ -37,11 +37,13 @@ class Blackboard:
     def set_content(self, index: str, new_content: str):
         with self.lock:
             self.content[index] = new_content
+            self.counter = len(self.content)
         return
 
     def del_content(self, index: str):
         with self.lock:
             self.content.pop(index)
+            self.counter = len(self.content)
         return
 
 
@@ -75,15 +77,13 @@ class Server(Bottle):
         self.id = int(ID)
         self.ip = str(IP)
         self.rnd_number = random.randint(0, 10 ** 6)
-        # dictionary with shape server_ip: (rnd_number, next_ip)
-        self.servers_dict = dict.fromkeys(servers_list, (Any, Any))
-        # Bottle doesn't allow reassigning an attribute, so this is a workaround by changing the 1st element of the list
-        self.leader_ip = ['']
-        self.next_ip = ['']
+        # dictionary of shape server_ip: (rnd_number, next_ip)
+        self.svrs_dict = ServerDict(ip=self.ip, rnd_number=self.rnd_number)
         if self.id < 8:
-            self.next_ip[0] = '10.1.0.' + str(self.id + 1)
+            self.svrs_dict.next_ip = '10.1.0.' + str(self.id + 1)
         else:
-            self.next_ip[0] = '10.1.0.1'
+            self.svrs_dict.next_ip = '10.1.0.1'
+        print(self.svrs_dict)
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
@@ -124,7 +124,7 @@ class Server(Bottle):
         # Try to contact another server through a POST or GET
         # usage: server.contact_another_server("10.1.1.1", "/index", "POST", params_dict)
         start = time.time()
-        timeout = 5.
+        timeout = 1.
         success = False
         while not success and time.time() - start <= timeout:
             try:
@@ -144,19 +144,17 @@ class Server(Bottle):
     def start_leader_election(self):
         # put ip and random number in str separated by "|"
         servers_str = str(self.ip) + '|' + str(self.rnd_number) + '|'
-        self.do_parallel_task(self.contact_another_server,
-                              args=(self.next_ip[0], '/leader_election', 'POST',
-                                    {'action': 'election', 'servers_dict': servers_str, 'initiator_ip': self.ip}))
+        self.do_parallel_task(self.send_election_message,
+                              args=('election', servers_str, self.ip))
 
     def send_election_message(self, action, servers_str, init_ip):
-        success = self.contact_another_server(self.next_ip[0], '/leader_election', 'POST',
+        success = self.contact_another_server(self.svrs_dict.next_ip, '/leader_election', 'POST',
                                               {'action': action,
                                                'servers_dict': servers_str,
                                                'initiator_ip': init_ip})
         if not success:
             # Set own next_ip to the next server's next_ip in the ring
-            self.servers_dict[self.ip] = (self.rnd_number, self.servers_dict[self.servers_dict[self.ip][1]][1])
-            self.next_ip[0] = self.servers_dict[self.ip][1]
+            self.svrs_dict.next_ip = self.svrs_dict[self.svrs_dict.next_ip][1]
             self.send_election_message(action, servers_str, init_ip)
 
     def post_leader_election(self):
@@ -172,6 +170,8 @@ class Server(Bottle):
                 servers_str += str(self.ip) + '|' + str(self.rnd_number) + '|'
             self.do_parallel_task(self.send_election_message, args=(action, servers_str, init_ip))
         elif action == 'coordination':
+            # remove all servers from the dictionary inclusive the dead ones
+            self.svrs_dict.clear()
             if servers_str[-1] == '|':
                 servers_str = servers_str[:-1]
             servers_list = servers_str.split('|')
@@ -182,35 +182,34 @@ class Server(Bottle):
             rnd_list = [int(i) for i in servers_list[1::2]]
             # make a dictionary of shape server_ip: (rnd_number, next_ip)
             for i in range(0, len(ip_list)):
-                self.servers_dict[ip_list[i]] = (rnd_list[i], ip_list[(i + 1) % len(ip_list)])
+                self.svrs_dict[ip_list[i]] = (rnd_list[i], ip_list[(i + 1) % len(ip_list)])
             # get a list of all indices of rnd_list where rnd_number max is
             max_indices = [i for i, j in enumerate(rnd_list) if j == max(rnd_list)]
             # get a list of IPs where rnd_number max is
             max_ip_list = [ip_list[i] for i in max_indices]
             # leader_ip is the max ip where rnd_number max is
-            self.leader_ip[0] = max(max_ip_list)
-            self.next_ip[0] = self.servers_dict[self.ip][1]
-            print('leader ' + self.leader_ip[0])
+            self.svrs_dict.leader_ip = max(max_ip_list)
+            print('leader ' + self.svrs_dict.leader_ip)
 
             if self.ip != init_ip:
                 self.do_parallel_task(self.contact_another_server,
-                                      args=(self.next_ip[0], '/leader_election', 'POST',
+                                      args=(self.svrs_dict.next_ip, '/leader_election', 'POST',
                                             {'action': 'coordination',
                                              'servers_dict': servers_str,
                                              'initiator_ip': init_ip}))
 
     def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
-        for srv_ip in self.servers_dict:
+        for srv_ip in self.svrs_dict:
             if srv_ip != self.ip:  # don't propagate to yourself
                 success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
 
     def propagate_to_leader(self, URI, req='POST', params_dict=None):
-        success = self.contact_another_server(self.leader_ip[0], URI, req, params_dict)
+        success = self.contact_another_server(self.svrs_dict.leader_ip, URI, req, params_dict)
         if not success:
             print("[WARNING ]Could not contact leader {}. \nStarting election".format(
-                self.leader_ip[0]))
+                self.svrs_dict.leader_ip))
             self.start_leader_election()
 
     # post to ('/propagate_leader')
@@ -257,7 +256,7 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
-        role = 'leader' if self.leader_ip[0] == self.ip else 'follower'
+        role = 'leader' if self.svrs_dict.leader_ip == self.ip else 'follower'
         return template('server/templates/index.tpl',
                         board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
                                                                          self.rnd_number, role),
@@ -269,7 +268,7 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
-        role = 'leader' if self.leader_ip[0] == self.ip else 'follower'
+        role = 'leader' if self.svrs_dict.leader_ip == self.ip else 'follower'
         return template('server/templates/blackboard.tpl',
                         board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
                                                                          self.rnd_number, role),
@@ -338,7 +337,7 @@ def main():
                    host=server_ip,
                    port=PORT)
     except Exception as e:
-        print("[ERROR] " + str(e))
+        raise Exception(str(e))
 
 
 # ------------------------------------------------------------------------------------------------------
