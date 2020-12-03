@@ -19,7 +19,7 @@ def post(server_id, msg_id):
 
 
 def modify(server_id):
-    res = requests.post('http://10.1.0.{}{}'.format(server_id, '/board/3/'),
+    res = requests.post('http://10.1.0.{}{}'.format(server_id, '/board/2'),
                         {'entry': "modified at server " + str(server_id), 'delete': '0'})
 
 
@@ -41,5 +41,5 @@ def modify_from_each_server():
         do_parallel_task(modify, args=(server + 1,))
 
 
-post_from_all_servers();
-# modify_from_each_server();
+# post_from_all_servers();
+modify_from_each_server();
