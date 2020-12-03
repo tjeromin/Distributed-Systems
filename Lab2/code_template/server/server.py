@@ -130,31 +130,31 @@ class Server(Bottle):
     def contact_another_server(self, srv_ip, URI, req='POST', params_dict=None):
         # Try to contact another server through a POST or GET
         # usage: server.contact_another_server("10.1.1.1", "/index", "POST", params_dict)
-        start = time.time()
-        timeout = 1.
         success = False
-        while not success and time.time() - start <= timeout:
-            try:
-                res = 0
-                if 'POST' in req:
-                    res = requests.post('http://{}{}'.format(srv_ip, URI),
-                                        data=params_dict)
-                elif 'GET' in req:
-                    res = requests.get('http://{}{}'.format(srv_ip, URI))
-                # result can be accessed res.json()
-                if res.status_code == 200:
-                    success = True
-            except Exception as e:
-                print("[ERROR] " + str(e))
+        try:
+            res = 0
+            if 'POST' in req:
+                res = requests.post('http://{}{}'.format(srv_ip, URI),
+                                    data=params_dict)
+            elif 'GET' in req:
+                res = requests.get('http://{}{}'.format(srv_ip, URI))
+            # result can be accessed res.json()
+            if res.status_code == 200:
+                success = True
+        except Exception as e:
+            print("[ERROR] " + str(e))
         return success
 
     def start_leader_election(self):
-        # put ip and random number in str separated by "|"
+        # put ip and random number in a string separated by "|" and send it to the next server
+        # every server concatenates the string with its own ip and random number
+        # the own ip is send to check if the message travelled around the ring
         servers_str = str(self.ip) + '|' + str(self.rnd_number) + '|'
         self.do_parallel_task(self.send_election_message,
                               args=('election', servers_str, self.ip))
 
     def send_election_message(self, action, servers_str, init_ip):
+        # sends an election message to the next server and if it fails to the next's next server
         success = self.contact_another_server(self.svrs_dict.next_ip, '/leader_election', 'POST',
                                               {'action': action,
                                                'servers_dict': servers_str,
@@ -170,6 +170,8 @@ class Server(Bottle):
         init_ip = request.forms.get('initiator_ip')
 
         if action == 'election':
+            # add own ip and random number to the string and send the message to the next server
+            # if the message travelled around the ring the message type changes to coordination
             print('election')
             if init_ip == self.ip:
                 action = 'coordination'
@@ -177,12 +179,14 @@ class Server(Bottle):
                 servers_str += str(self.ip) + '|' + str(self.rnd_number) + '|'
             self.do_parallel_task(self.send_election_message, args=(action, servers_str, init_ip))
         elif action == 'coordination':
+            # the election message travelled around the ring and collected all ips and random numbers.
+            # these information will be stored in svrs_dict
+
             # remove all servers from the dictionary inclusive the dead ones
             self.svrs_dict.clear()
             if servers_str[-1] == '|':
                 servers_str = servers_str[:-1]
             servers_list = servers_str.split('|')
-            # [ip1, rnd1, ip2, rnd2, ...]
             # list of all server_ip's
             ip_list = servers_list[0::2]
             # list of all rnd_number's
@@ -199,6 +203,7 @@ class Server(Bottle):
             print('leader ' + self.svrs_dict.leader_ip)
 
             if self.ip != init_ip:
+                # send coordination message to the next server
                 self.do_parallel_task(self.contact_another_server,
                                       args=(self.svrs_dict.next_ip, '/leader_election', 'POST',
                                             {'action': 'coordination',
@@ -213,6 +218,7 @@ class Server(Bottle):
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
 
     def propagate_to_leader(self, URI, req='POST', params_dict=None):
+        # tries to connect to the leader and if it fails starts a new election
         success = self.contact_another_server(self.svrs_dict.leader_ip, URI, req, params_dict)
         if not success:
             print("[WARNING ]Could not contact leader {}. \nStarting election".format(
@@ -221,6 +227,8 @@ class Server(Bottle):
 
     # post to ('/propagate_leader')
     def post_propagate_leader(self):
+        # followers sends to this uri.
+        # information will be stored locally and propagated to all followers
         action = request.forms.get('action')
 
         if action == 'submit':
@@ -245,6 +253,7 @@ class Server(Bottle):
 
     # post to ('/propagate')
     def post_propagate(self):
+        # follower stores the information received by the leader in the local blackboard
         action = request.forms.get('action')
         element_id = request.forms.get('element_id')
 
