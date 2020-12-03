@@ -30,16 +30,16 @@ def do_parallel_task(method, args=None):
     thread.start()
 
 
-def post_from_all_servers():
-    for msg in range(5):
+def post_from_all_servers(n):
+    for msg in range(n):
         for server in range(8):
             do_parallel_task(post, args=(server + 1, msg + 1))
 
 
-def modify_from_each_server():
-    for server in range(8):
+def modify_from_each_server(n):
+    for server in range(n):
         do_parallel_task(modify, args=(server + 1,))
 
 
-post_from_all_servers();
-# modify_from_each_server();
+post_from_all_servers(3)
+# modify_from_each_server()

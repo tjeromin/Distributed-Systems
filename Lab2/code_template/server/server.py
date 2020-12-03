@@ -11,6 +11,7 @@ import bottle
 from bottle import Bottle, request, template, run, static_file
 import requests
 import random
+import collections
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -29,20 +30,22 @@ class Blackboard:
 
     def add_content(self, new_entry: str) -> str:
         with self.lock:
-            self.content[str(self.counter)] = new_entry
+            self.content[self.counter] = new_entry
             element_id = str(self.counter)
             self.counter += 1
         return element_id
 
     def set_content(self, index: str, new_content: str):
         with self.lock:
-            self.content[index] = new_content
+            self.content[int(index)] = new_content
             self.counter = len(self.content)
+            # ordering the dict
+            self.content = collections.OrderedDict(sorted(self.content.items()))
         return
 
     def del_content(self, index: str):
         with self.lock:
-            self.content.pop(index)
+            self.content.pop(int(index))
             self.counter = len(self.content)
         return
 
@@ -71,18 +74,19 @@ class ServerDict(dict):
 # ------------------------------------------------------------------------------------------------------
 class Server(Bottle):
 
-    def __init__(self, ID, IP, servers_list):
+    def __init__(self, ID, IP, servers_list: list):
         super(Server, self).__init__()
         self.blackboard = Blackboard()
         self.id = int(ID)
         self.ip = str(IP)
+        # LE attribute
         self.rnd_number = random.randint(0, 10 ** 6)
-        # dictionary of shape server_ip: (rnd_number, next_ip)
+        # dictionary of shape server_ip: (rnd_number, next_ip) to store all ips and random numbers of
+        # all servers
         self.svrs_dict = ServerDict(ip=self.ip, rnd_number=self.rnd_number)
-        if self.id < 8:
-            self.svrs_dict.next_ip = '10.1.0.' + str(self.id + 1)
-        else:
-            self.svrs_dict.next_ip = '10.1.0.1'
+        # create the ring structure
+        index = servers_list.index(self.ip)
+        self.svrs_dict.next_ip = servers_list[(index + 1) % len(servers_list)]
         print(self.svrs_dict)
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
@@ -92,8 +96,11 @@ class Server(Bottle):
         self.post('/board/<element_id:int>/', callback=self.post_modify)
         # we give access to the templates elements
         self.get('/templates/<filename:path>', callback=self.get_template)
+        # leader propagates new entries to all followers
         self.post('/propagate', callback=self.post_propagate)
+        # propagate submit, modify or delete an entry to the leader
         self.post('/propagate_leader', callback=self.post_propagate_leader)
+        # send election messages to the next server in the ring
         self.post('/leader_election', callback=self.post_leader_election)
         # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
         # callback=self.post_board) where post_board takes an argument (integer) called element_id
@@ -153,7 +160,7 @@ class Server(Bottle):
                                                'servers_dict': servers_str,
                                                'initiator_ip': init_ip})
         if not success:
-            # Set own next_ip to the next server's next_ip in the ring
+            # Set own next_ip to the next server's next_ip in the ring and try again
             self.svrs_dict.next_ip = self.svrs_dict[self.svrs_dict.next_ip][1]
             self.send_election_message(action, servers_str, init_ip)
 
@@ -219,7 +226,6 @@ class Server(Bottle):
         if action == 'submit':
             entry = request.forms.get('entry')
             element_id = self.blackboard.add_content(entry)
-            # waiting for all to return when spreading content
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate', 'POST',
                                         {'action': 'submit', 'entry': entry, 'element_id': element_id}))
