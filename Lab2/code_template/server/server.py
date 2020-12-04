@@ -149,7 +149,7 @@ class Server(Bottle):
         # put ip and random number in a string separated by "|" and send it to the next server
         # every server concatenates the string with its own ip and random number
         # the own ip is send to check if the message travelled around the ring
-        servers_str = str(self.ip) + '|' + str(self.rnd_number) + '|'
+        servers_str = self.ip + '|' + str(self.rnd_number) + '|'
         self.do_parallel_task(self.send_election_message,
                               args=('election', servers_str, self.ip))
 
