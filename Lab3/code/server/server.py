@@ -14,8 +14,12 @@ import random
 import collections
 
 
-# ------------------------------------------------------------------------------------------------------
+SUBMIT = 'submit'
+MODIFY = 'modify'
+DELETE = 'delete'
 
+
+# ------------------------------------------------------------------------------------------------------
 class Blackboard:
 
     def __init__(self):
@@ -51,43 +55,33 @@ class Blackboard:
 
 
 # ------------------------------------------------------------------------------------------------------
-class ServerDict(dict):
-    """ Dictionary of shape server_ip: (rnd_number, next_ip).
-        Stores all servers' ip addresses in the ring with its rnd_number and its successor's ip address
-    """
+class Message:
 
-    def __init__(self, ip, rnd_number):
-        super().__init__()
-        self.__ip = ip
-        self.__rnd_number = rnd_number
-        self.leader_ip = None
+    def __init__(self, action, vector_clocks, entry=None):
+        super.__init__()
+        self.action = action
+        self.vector_clocks = vector_clocks
+        self.entry = entry
 
-    @property
-    def next_ip(self):
-        return self.__getitem__(self.__ip)[1]
+    def to_dict(self):
+        return {'action': self.action, 'vector_clocks': self.vector_clocks, 'entry': self.entry}
 
-    @next_ip.setter
-    def next_ip(self, value: str):
-        self.__setitem__(self.__ip, (self.__rnd_number, value))
+    @staticmethod
+    def request_to_msg(req: bottle.BaseRequest):
+        form = req.forms
+        return Message(form.get('action'), json.loads(form.get('vector_clock')), form.get('entry'))
 
 
 # ------------------------------------------------------------------------------------------------------
 class Server(Bottle):
 
-    def __init__(self, ID, IP, servers_list: list):
+    def __init__(self, ID, IP, servers_list):
+        """Distributed blackboard server using vector clocks and an ordered queue for writes."""
         super(Server, self).__init__()
         self.blackboard = Blackboard()
         self.id = int(ID)
         self.ip = str(IP)
-        # LE attribute
-        self.rnd_number = random.randint(0, 10 ** 6)
-        # dictionary of shape server_ip: (rnd_number, next_ip) to store all ips and random numbers of
-        # all servers
-        self.svrs_dict = ServerDict(ip=self.ip, rnd_number=self.rnd_number)
-        # create the ring structure
-        index = servers_list.index(self.ip)
-        self.svrs_dict.next_ip = servers_list[(index + 1) % len(servers_list)]
-        print(self.svrs_dict)
+        self.vector_clock = {ip: 0 for ip in servers_list}
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
@@ -98,10 +92,6 @@ class Server(Bottle):
         self.get('/templates/<filename:path>', callback=self.get_template)
         # leader propagates new entries to all followers
         self.post('/propagate', callback=self.post_propagate)
-        # propagate submit, modify or delete an entry to the leader
-        self.post('/propagate_leader', callback=self.post_propagate_leader)
-        # send election messages to the next server in the ring
-        self.post('/leader_election', callback=self.post_leader_election)
         # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
         # callback=self.post_board) where post_board takes an argument (integer) called element_id
 
@@ -145,111 +135,12 @@ class Server(Bottle):
             print("[ERROR] " + str(e))
         return success
 
-    def start_leader_election(self):
-        # put ip and random number in a string separated by "|" and send it to the next server
-        # every server concatenates the string with its own ip and random number
-        # the own ip is send to check if the message travelled around the ring
-        servers_str = self.ip + '|' + str(self.rnd_number) + '|'
-        self.do_parallel_task(self.send_election_message,
-                              args=('election', servers_str, self.ip))
-
-    def send_election_message(self, action, servers_str, init_ip):
-        # sends an election message to the next server and if it fails to the next's next server
-        success = self.contact_another_server(self.svrs_dict.next_ip, '/leader_election', 'POST',
-                                              {'action': action,
-                                               'servers_dict': servers_str,
-                                               'initiator_ip': init_ip})
-        if not success:
-            # Set own next_ip to the next server's next_ip in the ring and try again
-            self.svrs_dict.next_ip = self.svrs_dict[self.svrs_dict.next_ip][1]
-            self.send_election_message(action, servers_str, init_ip)
-
-    def post_leader_election(self):
-        action = request.forms.get('action')
-        servers_str = request.forms.get('servers_dict')
-        init_ip = request.forms.get('initiator_ip')
-
-        if action == 'election':
-            # add own ip and random number to the string and send the message to the next server
-            # if the message travelled around the ring the message type changes to coordination
-            print('election')
-            if init_ip == self.ip:
-                action = 'coordination'
-            else:
-                servers_str += str(self.ip) + '|' + str(self.rnd_number) + '|'
-            self.do_parallel_task(self.send_election_message, args=(action, servers_str, init_ip))
-        elif action == 'coordination':
-            # the election message travelled around the ring and collected all ips and random numbers.
-            # these information will be stored in svrs_dict
-
-            # remove all servers from the dictionary inclusive the dead ones
-            self.svrs_dict.clear()
-            if servers_str[-1] == '|':
-                servers_str = servers_str[:-1]
-            servers_list = servers_str.split('|')
-            # list of all server_ip's
-            ip_list = servers_list[0::2]
-            # list of all rnd_number's
-            rnd_list = [int(i) for i in servers_list[1::2]]
-            # make a dictionary of shape server_ip: (rnd_number, next_ip)
-            for i in range(0, len(ip_list)):
-                self.svrs_dict[ip_list[i]] = (rnd_list[i], ip_list[(i + 1) % len(ip_list)])
-            # get a list of all indices of rnd_list where rnd_number max is
-            max_indices = [i for i, j in enumerate(rnd_list) if j == max(rnd_list)]
-            # get a list of IPs where rnd_number max is
-            max_ip_list = [ip_list[i] for i in max_indices]
-            # leader_ip is the max ip where rnd_number max is
-            self.svrs_dict.leader_ip = max(max_ip_list)
-            print('leader ' + self.svrs_dict.leader_ip)
-
-            if self.ip != init_ip:
-                # send coordination message to the next server
-                self.do_parallel_task(self.contact_another_server,
-                                      args=(self.svrs_dict.next_ip, '/leader_election', 'POST',
-                                            {'action': 'coordination',
-                                             'servers_dict': servers_str,
-                                             'initiator_ip': init_ip}))
-
     def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
         for srv_ip in self.svrs_dict:
             if srv_ip != self.ip:  # don't propagate to yourself
                 success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
-
-    def propagate_to_leader(self, URI, req='POST', params_dict=None):
-        # tries to connect to the leader and if it fails starts a new election
-        success = self.contact_another_server(self.svrs_dict.leader_ip, URI, req, params_dict)
-        if not success:
-            print("[WARNING ]Could not contact leader {}. \nStarting election".format(
-                self.svrs_dict.leader_ip))
-            self.start_leader_election()
-
-    # post to ('/propagate_leader')
-    def post_propagate_leader(self):
-        # followers sends to this uri.
-        # information will be stored locally and propagated to all followers
-        action = request.forms.get('action')
-
-        if action == 'submit':
-            entry = request.forms.get('entry')
-            element_id = self.blackboard.add_content(entry)
-            self.do_parallel_task(self.propagate_to_all_servers,
-                                  args=('/propagate', 'POST',
-                                        {'action': 'submit', 'entry': entry, 'element_id': element_id}))
-        elif action == 'modify':
-            entry = request.forms.get('entry')
-            element_id = request.forms.get('element_id')
-            self.do_parallel_task(self.propagate_to_all_servers,
-                                  args=('/propagate', 'POST',
-                                        {'action': 'modify', 'element_id': element_id, 'entry': entry}))
-            self.blackboard.set_content(element_id, entry)
-        elif action == 'delete':
-            element_id = request.forms.get('element_id')
-            self.do_parallel_task(self.propagate_to_all_servers,
-                                  args=('/propagate', 'POST',
-                                        {'action': 'delete', 'element_id': element_id}))
-            self.blackboard.del_content(element_id)
 
     # post to ('/propagate')
     def post_propagate(self):
