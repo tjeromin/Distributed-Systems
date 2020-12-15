@@ -13,7 +13,6 @@ import requests
 import random
 import collections
 
-
 SUBMIT = 'submit'
 MODIFY = 'modify'
 DELETE = 'delete'
@@ -62,6 +61,7 @@ class Message:
         self.action = action
         self.vector_clocks = vector_clocks
         self.entry = entry
+        self.ip = None
 
     def to_dict(self):
         return {'action': self.action, 'vector_clocks': self.vector_clocks, 'entry': self.entry}
@@ -79,9 +79,15 @@ class Server(Bottle):
         """Distributed blackboard server using vector clocks and an ordered queue for writes."""
         super(Server, self).__init__()
         self.blackboard = Blackboard()
+        self.servers_list = servers_list
         self.id = int(ID)
         self.ip = str(IP)
         self.vector_clock = {ip: 0 for ip in servers_list}
+        self.out_msg = list()
+        # all messages that couldn't be delivered to its receiver
+        self.in_msg = list()
+        # start method which tries to send undelivered messages
+        self.do_parallel_task(self.send_msg_from_queue)
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
@@ -135,12 +141,30 @@ class Server(Bottle):
             print("[ERROR] " + str(e))
         return success
 
-    def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
-        for srv_ip in self.svrs_dict:
+    def propagate_to_all_servers(self, URI='/propagate', req='POST', msg=Message):
+        for srv_ip in self.servers_list:
             if srv_ip != self.ip:  # don't propagate to yourself
-                success = self.contact_another_server(srv_ip, URI, req, params_dict)
+                success = self.contact_another_server(srv_ip, URI, req, msg.to_dict())
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
+                    msg.ip = srv_ip
+                    self.out_msg.append(msg)
+
+    def send_msg_from_queue(self):
+        while True:
+            time.sleep(3)
+            # try to send all messages in queue and delete all which could be delivered
+            self.out_msg = [msg for msg in self.out_msg
+                            if not self.contact_another_server(
+                                srv_ip=msg.ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
+
+    def process_msg(self):
+        deliverable = False
+
+        if not deliverable:
+            self.out_msg.append(deliverable)
+        else:
+            pass
 
     # post to ('/propagate')
     def post_propagate(self):
@@ -162,10 +186,8 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
-        role = 'leader' if self.svrs_dict.leader_ip == self.ip else 'follower'
         return template('server/templates/index.tpl',
-                        board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
-                                                                         self.rnd_number, role),
+                        board_title='Server {} ({})'.format(self.id, self.ip),
                         board_dict=board.items(),
                         members_name_string='Lorenz Meierhofer and Tino Jeromin')
 
@@ -174,10 +196,8 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
-        role = 'leader' if self.svrs_dict.leader_ip == self.ip else 'follower'
         return template('server/templates/blackboard.tpl',
-                        board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
-                                                                         self.rnd_number, role),
+                        board_title='Server {} ({})'.format(self.id, self.ip),
                         board_dict=board.items())
 
     # post on ('/board')
