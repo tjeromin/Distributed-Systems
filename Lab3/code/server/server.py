@@ -80,9 +80,10 @@ class Server(Bottle):
         super(Server, self).__init__()
         self.blackboard = Blackboard()
         self.servers_list = servers_list
+        self.lock = Lock()
         self.id = int(ID)
         self.ip = str(IP)
-        self.vector_clock = {ip: 0 for ip in servers_list}
+        self.vector_clocks = {ip: 0 for ip in servers_list}
         self.out_msg = list()
         # all messages that couldn't be delivered to its receiver
         self.in_msg = list()
@@ -101,7 +102,7 @@ class Server(Bottle):
         # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
         # callback=self.post_board) where post_board takes an argument (integer) called element_id
 
-    def do_parallel_task(self, method, args=None):
+    def do_parallel_task(self, method, args=()):
         # create a thread running a new task Usage example: self.do_parallel_task(self.contact_another_server,
         # args=("10.1.0.2", "/index", "POST", params_dict)) this would start a thread sending a post request to
         # server 10.1.0.2 with URI /index and with params params_dict
@@ -154,15 +155,20 @@ class Server(Bottle):
         while True:
             time.sleep(3)
             # try to send all messages in queue and delete all which could be delivered
-            self.out_msg = [msg for msg in self.out_msg
-                            if not self.contact_another_server(
+            self.out_msg[:] = [msg for msg in self.out_msg
+                               if not self.contact_another_server(
                                 srv_ip=msg.ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
 
-    def process_msg(self):
-        deliverable = False
+    def process_msg(self, msg: Message):
+        deliverable = True
+
+        with self.lock:
+            for ip in self.servers_list:
+                if self.vector_clocks[ip] < msg.vector_clocks[ip] - 1:
+                    deliverable = False
 
         if not deliverable:
-            self.out_msg.append(deliverable)
+            self.out_msg.append(msg)
         else:
             pass
 
@@ -205,10 +211,11 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
+            msg = Message(SUBMIT, self.vector_clocks, new_entry)
+            with self.lock:
+                self.vector_clocks[self.ip] += 1
             print("Received: {}".format(new_entry))
-            self.do_parallel_task(self.propagate_to_leader,
-                                  args=('/propagate_leader', 'POST',
-                                        {'action': 'submit', 'entry': new_entry}))
+            self.do_parallel_task(self.propagate_to_all_servers, args=('/propagate', 'POST', msg,))
         except Exception as e:
             print("[ERROR] " + str(e))
 
@@ -220,13 +227,15 @@ class Server(Bottle):
             delete = request.forms.get('delete')
 
             if delete == '1':
-                action = 'delete'
+                action = DELETE
             else:
-                action = 'modify'
+                action = MODIFY
+            msg = Message(action, self.vector_clocks, new_entry)
+            with self.lock:
+                self.vector_clocks[self.ip] += 1
             print("Received: {}".format(new_entry))
-            self.do_parallel_task(self.propagate_to_leader,
-                                  args=('/propagate_leader', 'POST',
-                                        {'action': action, 'element_id': element_id, 'entry': new_entry}))
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate', 'POST', msg))
         except Exception as e:
             print("[ERROR] " + str(e))
 
@@ -258,7 +267,6 @@ def main():
         server = Server(server_id,
                         server_ip,
                         servers_list)
-        server.do_parallel_task_after_delay(delay=2, method=server.start_leader_election, args=[])
         bottle.run(server,
                    host=server_ip,
                    port=PORT)
