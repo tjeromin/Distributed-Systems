@@ -56,12 +56,13 @@ class Blackboard:
 # ------------------------------------------------------------------------------------------------------
 class Message:
 
-    def __init__(self, action, vector_clocks, entry=None):
+    def __init__(self, action, vector_clocks,from_ip, entry=None):
         super.__init__()
         self.action = action
         self.vector_clocks = vector_clocks
         self.entry = entry
-        self.ip = None
+        self.to_ip = None
+        self.from_ip = from_ip
 
     def to_dict(self):
         return {'action': self.action, 'vector_clocks': self.vector_clocks, 'entry': self.entry}
@@ -157,19 +158,15 @@ class Server(Bottle):
             # try to send all messages in queue and delete all which could be delivered
             self.out_msg[:] = [msg for msg in self.out_msg
                                if not self.contact_another_server(
-                                srv_ip=msg.ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
+                                srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
 
     def process_msg(self, msg: Message):
         deliverable = True
 
-        with self.lock:
-            for ip in self.servers_list:
-                if self.vector_clocks[ip] < msg.vector_clocks[ip] - 1:
-                    deliverable = False
-
         if not deliverable:
             self.out_msg.append(msg)
         else:
+            # apply msg
             pass
 
     # post to ('/propagate')
@@ -211,7 +208,7 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            msg = Message(SUBMIT, self.vector_clocks, new_entry)
+            msg = Message(SUBMIT, self.vector_clocks, self.ip, new_entry)
             with self.lock:
                 self.vector_clocks[self.ip] += 1
             print("Received: {}".format(new_entry))
@@ -230,7 +227,7 @@ class Server(Bottle):
                 action = DELETE
             else:
                 action = MODIFY
-            msg = Message(action, self.vector_clocks, new_entry)
+            msg = Message(action, self.vector_clocks, self.ip, new_entry)
             with self.lock:
                 self.vector_clocks[self.ip] += 1
             print("Received: {}".format(new_entry))
