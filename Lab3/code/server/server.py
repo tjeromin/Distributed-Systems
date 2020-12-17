@@ -17,6 +17,7 @@ import collections
 SUBMIT = 'submit'
 MODIFY = 'modify'
 DELETE = 'delete'
+SERVER_COUNT = 8
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -24,12 +25,17 @@ class Blackboard:
 
     def __init__(self):
         self.content = dict()
+
+        self.clock_list = []
+        self.entry_list = []
+
         self.counter = 0
         self.lock = Lock()  # use lock when you modify the content
 
     def get_content(self) -> dict:
         with self.lock:
-            cnt = self.content
+            zip_iterator = zip(keys_list, values_list)
+            cnt = dict(zip(self.clock_list, self.entry_list))
         return cnt
 
     def add_content(self, new_entry: str) -> str:
@@ -53,6 +59,41 @@ class Blackboard:
             self.counter = len(self.content)
         return
 
+    def add_entry(self, clock, new_entry):
+        with self.lock:
+            self.clock_list.append(tuple(clock))
+            self.entry_list.append(new_entry)
+        return
+
+    def integrate_entry(self, clock, new_entry):
+        sum_arg = 0
+        for element in clock:
+            sum_arg += element
+        with self.lock:
+            index = len(self.clock_list)
+            for timestamp in self.clock_list:
+                sum = 0
+                for element in timestamp:
+                    sum += element
+                if sum_arg > sum:
+                    break
+                if sum_arg < sum:
+                    # the entry needs to be inserted before the currently checked stamp (according to the total ordering defined by this function)
+                    index -= 1
+                    continue
+                if sum_arg == sum:
+                    for j in range(SERVER_COUNT):
+                        if clock[j] == timestamp[j]:
+                            continue
+                        elif clock[j] > timestamp[j]:
+                            index -= 1
+                            break
+                        elif clock[j] < timestamp[j]:
+                            break
+                    break
+
+            self.clock_list.insert(index, clock)
+            self.entry_list.insert(index, new_entry)
 
 # ------------------------------------------------------------------------------------------------------
 class Message:
@@ -81,7 +122,7 @@ class Server(Bottle):
         self.blackboard = Blackboard()
         self.id = int(ID)
         self.ip = str(IP)
-        self.vector_clock = {ip: 0 for ip in servers_list}
+        self.vector_clock = [0] * 8
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
@@ -144,7 +185,9 @@ class Server(Bottle):
 
     # post to ('/propagate')
     def post_propagate(self):
-        # follower stores the information received by the leader in the local blackboard
+        ###############################################################
+        ###############################################################
+        # GET CLOCK AND ENTRY FROM POST
         action = request.forms.get('action')
         element_id = request.forms.get('element_id')
 
@@ -185,10 +228,10 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            print("Received: {}".format(new_entry))
+            self.vector_clock [self.ID] += 1
             self.do_parallel_task(self.propagate_to_leader,
                                   args=('/propagate_leader', 'POST',
-                                        {'action': 'submit', 'entry': new_entry}))
+                                        {'action': 'submit', 'entry': new_entry, 'clock': self.vector_clock}))
         except Exception as e:
             print("[ERROR] " + str(e))
 
