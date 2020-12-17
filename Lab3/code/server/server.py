@@ -56,21 +56,22 @@ class Blackboard:
 # ------------------------------------------------------------------------------------------------------
 class Message:
 
-    def __init__(self, action, vector_clocks,from_ip, entry=None):
-        super.__init__()
+    def __init__(self, action, vector_clocks, from_ip, entry=None, entry_id=None):
         self.action = action
         self.vector_clocks = vector_clocks
         self.entry = entry
+        self.entry_id = entry_id
         self.to_ip = None
         self.from_ip = from_ip
 
     def to_dict(self):
-        return {'action': self.action, 'vector_clocks': self.vector_clocks, 'entry': self.entry}
+        return {'action': self.action, 'vector_clocks': str(self.vector_clocks),
+                'from_ip': self.from_ip, 'entry': self.entry, 'entry_id': self.entry_id}
 
     @staticmethod
-    def request_to_msg(req: bottle.BaseRequest):
-        form = req.forms
-        return Message(form.get('action'), json.loads(form.get('vector_clock')), form.get('entry'))
+    def request_to_msg(form: bottle.FormsDict):
+        return Message(form.get('action'), json.loads(form.get('vector_clocks').replace("'", '"')),
+                       form.get('from_ip'), form.get('entry'), form.get('entry_id'))
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -161,6 +162,7 @@ class Server(Bottle):
                                 srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
 
     def process_msg(self, msg: Message):
+        # TODO: implement queue
         deliverable = True
 
         if not deliverable:
@@ -171,18 +173,16 @@ class Server(Bottle):
 
     # post to ('/propagate')
     def post_propagate(self):
-        # follower stores the information received by the leader in the local blackboard
-        action = request.forms.get('action')
-        element_id = request.forms.get('element_id')
+        msg = Message.request_to_msg(request.forms)
+        # print("received " + str(msg.to_dict()))
+        # print(msg.vector_clocks)
 
-        if action == 'submit':
-            entry = request.forms.get('entry')
-            self.blackboard.set_content(element_id, entry)
-        elif action == 'modify':
-            entry = request.forms.get('entry')
-            self.blackboard.set_content(element_id, entry)
-        elif action == 'delete':
-            self.blackboard.del_content(element_id)
+        if msg.action == SUBMIT:
+            self.blackboard.add_content(msg.entry)
+        elif msg.action == MODIFY:
+            self.blackboard.set_content(msg.entry_id, msg.entry)
+        elif msg.action == DELETE:
+            self.blackboard.del_content(msg.entry_id)
 
     # route to ('/')
     def index(self):
@@ -208,9 +208,11 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            msg = Message(SUBMIT, self.vector_clocks, self.ip, new_entry)
             with self.lock:
                 self.vector_clocks[self.ip] += 1
+                msg = Message(SUBMIT, self.vector_clocks, self.ip, new_entry)
+            self.blackboard.add_content(msg.entry)
+
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_all_servers, args=('/propagate', 'POST', msg,))
         except Exception as e:
@@ -225,9 +227,11 @@ class Server(Bottle):
 
             if delete == '1':
                 action = DELETE
+                self.blackboard.del_content(element_id)
             else:
                 action = MODIFY
-            msg = Message(action, self.vector_clocks, self.ip, new_entry)
+                self.blackboard.set_content(element_id, new_entry)
+            msg = Message(action, self.vector_clocks, self.ip, entry=new_entry, entry_id=element_id)
             with self.lock:
                 self.vector_clocks[self.ip] += 1
             print("Received: {}".format(new_entry))
