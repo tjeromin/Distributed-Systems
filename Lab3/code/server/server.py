@@ -98,21 +98,21 @@ class Blackboard:
 # ------------------------------------------------------------------------------------------------------
 class Message:
 
-    def __init__(self, action, vector_clocks, from_ip, entry=None, entry_id=None):
+    def __init__(self, action, vector_clock, from_ip, entry=None, entry_id=None):
         self.action = action
-        self.vector_clocks = vector_clocks
+        self.vector_clock = vector_clock
         self.entry = entry
         self.entry_id = entry_id
         self.to_ip = None
         self.from_ip = from_ip
 
     def to_dict(self):
-        return {'action': self.action, 'vector_clocks': str(self.vector_clocks),
+        return {'action': self.action, 'vector_clock': str(self.vector_clock),
                 'from_ip': self.from_ip, 'entry': self.entry, 'entry_id': self.entry_id}
 
     @staticmethod
     def request_to_msg(form: bottle.FormsDict):
-        return Message(form.get('action'), json.loads(form.get('vector_clocks').replace("'", '"')),
+        return Message(form.get('action'), json.loads(form.get('vector_clock').replace("'", '"')),
                        form.get('from_ip'), form.get('entry'), form.get('entry_id'))
 
 
@@ -128,11 +128,11 @@ class Server(Bottle):
         self.id = int(ID)
         self.ip = str(IP)
         self.vector_clocks = {ip: 0 for ip in servers_list}
-        self.out_msg = list()
+        #self.out_msg = list()
         # all messages that couldn't be delivered to its receiver
-        self.in_msg = list()
+        #self.in_msg = list()
         # start method which tries to send undelivered messages
-        self.do_parallel_task(self.send_msg_from_queue)
+        #self.do_parallel_task(self.send_msg_from_queue)
         self.vector_clock = [0] * 8
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
@@ -221,7 +221,7 @@ class Server(Bottle):
         # print(msg.vector_clocks)
 
         if msg.action == SUBMIT:
-            self.blackboard.add_content(msg.entry)
+            self.blackboard.integrate_entry(msg.vector_clock, msg.entry)
         elif msg.action == MODIFY:
             self.blackboard.set_content(msg.entry_id, msg.entry)
         elif msg.action == DELETE:
@@ -253,7 +253,7 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             with self.lock:
                 self.vector_clock [self.id - 1] += 1
-                msg = Message(SUBMIT, self.vector_clocks, self.ip, new_entry)
+                msg = Message(SUBMIT, self.vector_clock, self.ip, new_entry)
             self.blackboard.add_entry(self.vector_clock, new_entry)
 
             print("Received: {}".format(new_entry))
