@@ -217,6 +217,7 @@ class Server(Bottle):
     def post_propagate(self):
         msg = Message.request_to_msg(request.forms)
         if msg.action == SUBMIT:
+            print(str(msg.vector_clock) + ' from ' + str(msg.from_id))
             self.blackboard.integrate_entry(msg.vector_clock, msg.entry)
         elif msg.action == MODIFY:
             self.blackboard.set_content(msg.entry_id, msg.entry)

@@ -41,5 +41,5 @@ def modify_from_each_server(n):
         do_parallel_task(modify, args=(server + 1,))
 
 
-post_from_all_servers(2)
+post_from_all_servers(1)
 #modify_from_each_server(1)
