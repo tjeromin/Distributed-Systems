@@ -34,7 +34,6 @@ class Blackboard:
 
     def get_content(self) -> dict:
         with self.lock:
-            zip_iterator = zip(keys_list, values_list)
             cnt = dict(zip(self.clock_list, self.entry_list))
         return cnt
 
@@ -70,6 +69,7 @@ class Blackboard:
         for element in clock:
             sum_arg += element
         with self.lock:
+            #index at which to insert clock and entry
             index = len(self.clock_list)
             for timestamp in self.clock_list:
                 sum = 0
@@ -78,7 +78,8 @@ class Blackboard:
                 if sum_arg > sum:
                     break
                 if sum_arg < sum:
-                    # the entry needs to be inserted before the currently checked stamp (according to the total ordering defined by this function)
+                    # the entry needs to be inserted before the currently checked stamp
+                    # (according to the total ordering defined by this function)
                     index -= 1
                     continue
                 if sum_arg == sum:
@@ -92,7 +93,7 @@ class Blackboard:
                             break
                     break
 
-            self.clock_list.insert(index, clock)
+            self.clock_list.insert(index, tuple(clock))
             self.entry_list.insert(index, new_entry)
 
 # ------------------------------------------------------------------------------------------------------
@@ -119,6 +120,7 @@ class Server(Bottle):
     def __init__(self, ID, IP, servers_list):
         """Distributed blackboard server using vector clocks and an ordered queue for writes."""
         super(Server, self).__init__()
+        self.servers_list = servers_list
         self.blackboard = Blackboard()
         self.id = int(ID)
         self.ip = str(IP)
@@ -151,7 +153,7 @@ class Server(Bottle):
         # this would start a thread starting an election after 10 seconds
         thread = Thread(target=self._wrapper_delay_and_execute,
                         args=(delay, method, args))
-        thread.daemon = True
+        thread.daemon = False
         thread.start()
 
     def _wrapper_delay_and_execute(self, delay, method, args):
@@ -165,6 +167,7 @@ class Server(Bottle):
         try:
             res = 0
             if 'POST' in req:
+                print('EEEEEEE')
                 res = requests.post('http://{}{}'.format(srv_ip, URI),
                                     data=params_dict)
             elif 'GET' in req:
@@ -177,8 +180,10 @@ class Server(Bottle):
         return success
 
     def propagate_to_all_servers(self, URI='/propagate', req='POST', params_dict=None):
-        for srv_ip in self.svrs_dict:
+        print('CCCCCCC')
+        for srv_ip in self.servers_list:
             if srv_ip != self.ip:  # don't propagate to yourself
+                print('DDDDDDDD')
                 success = self.contact_another_server(srv_ip, URI, req, params_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
@@ -188,27 +193,29 @@ class Server(Bottle):
         ###############################################################
         ###############################################################
         # GET CLOCK AND ENTRY FROM POST
+        print('at /propagate!!!')
         action = request.forms.get('action')
-        element_id = request.forms.get('element_id')
+        print(action)
 
         if action == 'submit':
+            print('at submit!!!')
             entry = request.forms.get('entry')
-            self.blackboard.set_content(element_id, entry)
+            clock = json.loads(request.forms.get('clock'))
+            self.blackboard.integrate_entry(clock, entry)
         elif action == 'modify':
             entry = request.forms.get('entry')
-            self.blackboard.set_content(element_id, entry)
-        elif action == 'delete':
-            self.blackboard.del_content(element_id)
+            #self.blackboard.set_content(element_id, entry)
+        #elif action == 'delete':
+            #self.blackboard.del_content(element_id)
 
     # route to ('/')
     def index(self):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
-        role = 'leader' if self.svrs_dict.leader_ip == self.ip else 'follower'
         return template('server/templates/index.tpl',
-                        board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
-                                                                         self.rnd_number, role),
+                        board_title='Server {} ({})'.format(self.id,
+                                                            self.ip),
                         board_dict=board.items(),
                         members_name_string='Lorenz Meierhofer and Tino Jeromin')
 
@@ -217,10 +224,10 @@ class Server(Bottle):
         # we must transform the blackboard as a dict for compatibility reasons
         board = dict()
         board = self.blackboard.get_content()
-        role = 'leader' if self.svrs_dict.leader_ip == self.ip else 'follower'
+        #print(self.blackboard.get_content())
         return template('server/templates/blackboard.tpl',
-                        board_title='Server {} ({}) - #: {} - {}'.format(self.id, self.ip,
-                                                                         self.rnd_number, role),
+                        board_title='Server {} ({})'.format(self.id,
+                                                            self.ip),
                         board_dict=board.items())
 
     # post on ('/board')
@@ -228,10 +235,13 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            self.vector_clock [self.ID] += 1
-            self.do_parallel_task(self.propagate_to_leader,
-                                  args=('/propagate_leader', 'POST',
-                                        {'action': 'submit', 'entry': new_entry, 'clock': self.vector_clock}))
+            self.vector_clock [self.id - 1] += 1
+            self.blackboard.add_entry(self.vector_clock, new_entry)
+            print('AA')
+            self.do_parallel_task(self.propagate_to_all_servers(),
+                                  args=('/propagate', 'POST',
+                                        {'action': 'submit', 'entry': new_entry, 'clock': json.dumps(self.vector_clock)}))
+            print('BBBBBBB')
         except Exception as e:
             print("[ERROR] " + str(e))
 
@@ -281,7 +291,6 @@ def main():
         server = Server(server_id,
                         server_ip,
                         servers_list)
-        server.do_parallel_task_after_delay(delay=2, method=server.start_leader_election, args=[])
         bottle.run(server,
                    host=server_ip,
                    port=PORT)

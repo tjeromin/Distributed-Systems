@@ -117,6 +117,10 @@ class Server(Bottle):
         element_id = request.forms.get('element_id')
         entry = request.forms.get('entry')
         delete = request.forms.get('delete')
+        li = request.forms.get('list')
+        listt = json.loads(li)
+        listt [1] = 222
+        print(listt)
         if delete == '1':
             self.blackboard.del_content(int(element_id))
         elif element_id is None:
@@ -153,9 +157,11 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             self.blackboard.add_content(new_entry=new_entry)
             print("Received: {}".format(new_entry))
+            l = [1, 0, 0, 1]
+            li = json.dumps(l)
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate', 'POST',
-                                        {'delete': '0', 'element_id': None, 'entry': new_entry}))
+                                        {'delete': '0', 'element_id': None, 'entry': new_entry, 'list': li}))
         except Exception as e:
             print("[ERROR] " + str(e))
 
