@@ -70,7 +70,7 @@ class Blackboard:
         with self.lock:
             #index at which to insert clock and entry
             index = len(self.clock_list)
-            for timestamp in self.clock_list:
+            for timestamp in reversed(self.clock_list):
                 sum = 0
                 for element in timestamp:
                     sum += element
@@ -98,22 +98,22 @@ class Blackboard:
 # ------------------------------------------------------------------------------------------------------
 class Message:
 
-    def __init__(self, action, vector_clock, from_ip, entry=None, entry_id=None):
+    def __init__(self, action, vector_clock, from_id, entry=None, entry_id=None):
         self.action = action
         self.vector_clock = vector_clock
         self.entry = entry
         self.entry_id = entry_id
         self.to_ip = None
-        self.from_ip = from_ip
+        self.from_id = from_id
 
     def to_dict(self):
         return {'action': self.action, 'vector_clock': str(self.vector_clock),
-                'from_ip': self.from_ip, 'entry': self.entry, 'entry_id': self.entry_id}
+                'from_id': self.from_id, 'entry': self.entry, 'entry_id': self.entry_id}
 
     @staticmethod
     def request_to_msg(form: bottle.FormsDict):
         return Message(form.get('action'), json.loads(form.get('vector_clock').replace("'", '"')),
-                       form.get('from_ip'), form.get('entry'), form.get('entry_id'))
+                       form.get('from_id'), form.get('entry'), form.get('entry_id'))
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -193,8 +193,7 @@ class Server(Bottle):
                 success = self.contact_another_server(srv_ip, URI, req, msg.to_dict())
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
-                    msg.ip = srv_ip
-                    self.out_msg.append(msg)
+                    #msg.ip = srv_ip
 
     def send_msg_from_queue(self):
         while True:
@@ -217,15 +216,19 @@ class Server(Bottle):
     # post to ('/propagate')
     def post_propagate(self):
         msg = Message.request_to_msg(request.forms)
-        # print("received " + str(msg.to_dict()))
-        # print(msg.vector_clocks)
-
         if msg.action == SUBMIT:
             self.blackboard.integrate_entry(msg.vector_clock, msg.entry)
         elif msg.action == MODIFY:
             self.blackboard.set_content(msg.entry_id, msg.entry)
         elif msg.action == DELETE:
             self.blackboard.del_content(msg.entry_id)
+
+        self.vector_clock[self.id - 1] += 1
+        print('hello ')
+        print(msg.from_id)
+        print('hello ')
+
+        self.vector_clock[int(msg.from_id) - 1] += 1
 
     # route to ('/')
     def index(self):
@@ -253,7 +256,7 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             with self.lock:
                 self.vector_clock [self.id - 1] += 1
-                msg = Message(SUBMIT, self.vector_clock, self.ip, new_entry)
+                msg = Message(SUBMIT, self.vector_clock, self.id, new_entry)
             self.blackboard.add_entry(self.vector_clock, new_entry)
 
             print("Received: {}".format(new_entry))
