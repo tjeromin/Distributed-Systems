@@ -224,10 +224,6 @@ class Server(Bottle):
             self.blackboard.del_content(msg.entry_id)
 
         self.vector_clock[self.id - 1] += 1
-        print('hello ')
-        print(msg.from_id)
-        print('hello ')
-
         self.vector_clock[int(msg.from_id) - 1] += 1
 
     # route to ('/')
