@@ -37,15 +37,15 @@ class Blackboard:
         return cnt
 
     def modify_entry(self, clock: list, index: str, mod_entry: str):
-        with self.lock:
-            self.del_entry(index)
-            self.integrate_entry(clock, mod_entry)
+
+        self.del_entry(index)
+        self.integrate_entry(clock, mod_entry)
         return
 
     def del_entry(self, index: str):
         with self.lock:
-            self.clock_list.remove(index)
-            self.entry_list.remove(index)
+            self.clock_list.pop(int(index))
+            self.entry_list.pop(int(index))
         return
 
     def add_entry(self, clock: list, new_entry: str):
@@ -275,7 +275,7 @@ class Server(Bottle):
                     action = MODIFY
                     self.blackboard.modify_entry(self.vector_clock, element_id, new_entry)
 
-                msg = Message(action, self.vector_clock, self.ip, entry=new_entry, entry_id=element_id)
+                msg = Message(action, self.vector_clock, self.id, entry=new_entry, entry_id=element_id)
 
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_all_servers,
