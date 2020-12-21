@@ -64,31 +64,46 @@ class Blackboard:
         return
 
     def integrate_entry(self, clock, new_entry):
+        print("##################################")
+        print(new_entry)
+        print(clock)
+        print(self.clock_list)
+        print("#######")
+
         sum_arg = 0
         for element in clock:
             sum_arg += element
+        print("sum of new clock: " + str(sum_arg))
         with self.lock:
             #index at which to insert clock and entry
             index = len(self.clock_list)
+            print("index: " + str(index))
             for timestamp in reversed(self.clock_list):
                 sum = 0
                 for element in timestamp:
                     sum += element
+                print("sum of old stamp: " + str(sum))
                 if sum_arg > sum:
+                    print("new bigger than old")
                     break
                 if sum_arg < sum:
                     # the entry needs to be inserted before the currently checked stamp
                     # (according to the total ordering defined by this function)
+                    print("new smaller than old")
                     index -= 1
                     continue
                 if sum_arg == sum:
+                    print("clock from list and new clock sums equal")
                     for j in range(SERVER_COUNT):
                         if clock[j] == timestamp[j]:
+                            print("stamp and clock index same")
                             continue
                         elif clock[j] > timestamp[j]:
                             index -= 1
+                            print("clock index larger")
                             break
                         elif clock[j] < timestamp[j]:
+                            print("stamp index larger")
                             break
                     break
 
@@ -188,9 +203,10 @@ class Server(Bottle):
         return success
 
     def propagate_to_all_servers(self, URI='/propagate', req='POST', msg=Message):
+        msg_dict = msg.to_dict()
         for srv_ip in self.servers_list:
             if srv_ip != self.ip:  # don't propagate to yourself
-                success = self.contact_another_server(srv_ip, URI, req, msg.to_dict())
+                success = self.contact_another_server(srv_ip, URI, req, msg_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
                     #msg.ip = srv_ip
@@ -253,6 +269,7 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             with self.lock:
                 self.vector_clock [self.id - 1] += 1
+                print("clock before packing: " + str(self.vector_clock))
                 msg = Message(SUBMIT, self.vector_clock, self.id, new_entry)
             self.blackboard.add_entry(self.vector_clock, new_entry)
 
