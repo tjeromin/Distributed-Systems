@@ -90,7 +90,6 @@ class Blackboard:
                             break
                         elif clock[j] < timestamp[j]:
                             break
-                    break
 
             self.entries.insert(index, entry)
 
@@ -187,9 +186,10 @@ class Server(Bottle):
         return success
 
     def propagate_to_all_servers(self, URI='/propagate', req='POST', msg=Message):
+        msg_dict = msg.to_dict()
         for srv_ip in self.servers_list:
             if srv_ip != self.ip:  # don't propagate to yourself
-                success = self.contact_another_server(srv_ip, URI, req, msg.to_dict())
+                success = self.contact_another_server(srv_ip, URI, req, msg_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
                     # msg.ip = srv_ip
