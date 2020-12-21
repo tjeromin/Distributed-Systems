@@ -34,15 +34,15 @@ class Blackboard:
     def __init__(self):
         self.content = dict()
 
-        self.clock_list = []
-        self.entry_list = []
+        self.entries = list()
 
         self.counter = 0
         self.lock = Lock()  # use lock when you modify the content
 
     def get_content(self) -> dict:
         with self.lock:
-            cnt = dict(zip(self.clock_list, self.entry_list))
+            text_list = [e.text for e in self.entries]
+            cnt = dict(zip(list(range(0, len(self.entries))), text_list))
         return cnt
 
     def modify_entry(self, entry: Entry, index: str, ):
@@ -53,27 +53,24 @@ class Blackboard:
 
     def del_entry(self, index: str):
         with self.lock:
-            self.clock_list.pop(int(index))
-            self.entry_list.pop(int(index))
+            self.entries.pop(int(index))
         return
 
-    def add_entry(self, clock: list, new_entry: str):
+    def add_entry(self, new_entry: Entry):
         with self.lock:
-            self.clock_list.append(tuple(clock))
-            self.entry_list.append(new_entry)
+            self.entries.append(new_entry)
         return
 
     def integrate_entry(self, entry: Entry):
         clock = entry.vector_clock
-        text = entry.text
 
         sum_arg = 0
         for element in clock:
             sum_arg += element
         with self.lock:
             # index at which to insert clock and entry
-            index = len(self.clock_list)
-            for timestamp in reversed(self.clock_list):
+            index = len(self.entries)
+            for timestamp in reversed([e.vector_clock for e in self.entries]):
                 sum = 0
                 for element in timestamp:
                     sum += element
@@ -95,8 +92,7 @@ class Blackboard:
                             break
                     break
 
-            self.clock_list.insert(index, tuple(clock))
-            self.entry_list.insert(index, text)
+            self.entries.insert(index, entry)
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -261,7 +257,7 @@ class Server(Bottle):
             with self.lock:
                 self.vector_clock[self.id - 1] += 1
                 msg = Message(SUBMIT, self.vector_clock, self.id, new_entry)
-            self.blackboard.add_entry(self.vector_clock, new_entry)
+            self.blackboard.add_entry(msg.entry)
 
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_all_servers, args=('/propagate', 'POST', msg,))
