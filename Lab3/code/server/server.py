@@ -19,9 +19,6 @@ DELETE = 'delete'
 SERVER_COUNT = 8
 
 
-# TODO: modify, delete
-# TODO: entry class
-# TODO: out queue
 # TODO: entry history
 
 # ------------------------------------------------------------------------------------------------------
@@ -39,6 +36,7 @@ class Blackboard:
     def __init__(self):
         self.content = dict()
         self.entries = list()
+        self.deleted = list()
         self.counter = 0
         self.lock = Lock()  # use lock when you modify the content
 
@@ -191,10 +189,9 @@ class Server(Bottle):
         return success
 
     def propagate_to_all_servers(self, URI='/propagate', req='POST', msg=Message):
-        msg_dict = msg.to_dict()
         for srv_ip in self.servers_list:
             if srv_ip != self.ip:  # don't propagate to yourself
-                success = self.contact_another_server(srv_ip, URI, req, msg_dict)
+                success = self.contact_another_server(srv_ip, URI, req, msg.to_dict())
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
                     msg.to_ip = srv_ip
@@ -204,12 +201,13 @@ class Server(Bottle):
     def send_msg_from_queue(self):
         while True:
             time.sleep(3)
-            # try to send all messages in queue and delete all which could be delivered
-            with self.queue_lock:
-                print('Try to send {} that are currently in the queue...'.format(len(self.out_queue)))
-                self.out_queue[:] = [msg for msg in self.out_queue
-                                     if not self.contact_another_server(
-                                        srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
+            if len(self.out_queue) > 0:
+                # try to send all messages in queue and delete all which could be delivered
+                with self.queue_lock:
+                    print('Trying to send {} messages that are currently in the queue...'.format(len(self.out_queue)))
+                    self.out_queue[:] = [msg for msg in self.out_queue
+                                         if not self.contact_another_server(
+                                            srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict())]
 
     # post to ('/propagate')
     def post_propagate(self):
