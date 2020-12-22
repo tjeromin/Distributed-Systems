@@ -14,7 +14,7 @@
                                 % for board_entry, board_element in board_dict:
                                     <form class="entryform" target="noreload" method="post" action="/board/{{i}}/">
                                         <input type="text" name="id" value="{{i}}" readonly disabled> <!-- disabled field won’t be sent -->
-                                        <input type="text" name="vector_clock" value="{{board_entry}}" size="20%%">
+                                        <input type="text" name="vector_clock" value="{{board_entry}}" size="20%%" readonly>
                                         <input type="text" name="entry" value="{{board_element}}" size="60%%">
                                         <button type="submit" name="delete" value="0">Modify</button>
                                         <button type="submit" name="delete" value="1">X</button>

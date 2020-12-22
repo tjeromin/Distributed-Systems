@@ -38,12 +38,7 @@ class Blackboard:
 
     def __init__(self):
         self.content = dict()
-
         self.entries = list()
-
-        self.clock_list = []
-        self.entry_list = []
-
         self.counter = 0
         self.lock = Lock()  # use lock when you modify the content
 
@@ -53,13 +48,6 @@ class Blackboard:
             clock_list = [tuple(e.vector_clock) for e in self.entries]
             cnt = dict(zip(clock_list, text_list))
         return cnt
-
-    def add_content(self, new_entry: str) -> str:
-        with self.lock:
-            self.content[self.counter] = new_entry
-            element_id = str(self.counter)
-            self.counter += 1
-        return element_id
 
     def modify_entry(self, entry: Entry, index: str, ):
 
@@ -140,15 +128,14 @@ class Server(Bottle):
         super(Server, self).__init__()
         self.blackboard = Blackboard()
         self.servers_list = servers_list
-        self.lock = Lock()
         self.id = int(ID)
         self.ip = str(IP)
+        self.clock_lock = Lock()
         self.vector_clocks = {ip: 0 for ip in servers_list}
-        # self.out_msg = list()
         # all messages that couldn't be delivered to its receiver
-        # self.in_msg = list()
-        # start method which tries to send undelivered messages
-        # self.do_parallel_task(self.send_msg_from_queue)
+        self.out_queue = list()
+        self.queue_lock = Lock()
+        self.do_parallel_task(self.send_msg_from_queue)
         self.vector_clock = [0] * 8
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
@@ -210,41 +197,37 @@ class Server(Bottle):
                 success = self.contact_another_server(srv_ip, URI, req, msg_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
-                    # msg.ip = srv_ip
+                    msg.to_ip = srv_ip
+                    with self.queue_lock:
+                        self.out_queue.append(msg)
 
     def send_msg_from_queue(self):
         while True:
             time.sleep(3)
             # try to send all messages in queue and delete all which could be delivered
-            self.out_msg[:] = [msg for msg in self.out_msg
-                               if not self.contact_another_server(
-                    srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
-
-    def process_msg(self, msg: Message):
-        # TODO: implement queue
-        deliverable = True
-
-        if not deliverable:
-            self.out_msg.append(msg)
-        else:
-            # apply msg
-            pass
+            with self.queue_lock:
+                print('Try to send {} that are currently in the queue...'.format(len(self.out_queue)))
+                self.out_queue[:] = [msg for msg in self.out_queue
+                                     if not self.contact_another_server(
+                                        srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
 
     # post to ('/propagate')
     def post_propagate(self):
         msg = Message.request_to_msg(request.forms)
+        print(str(msg.vector_clock) + ' from ' + str(msg.from_id))
+
         if msg.action == SUBMIT:
-            print(str(msg.vector_clock) + ' from ' + str(msg.from_id))
             self.blackboard.integrate_entry(msg.entry)
         elif msg.action == MODIFY:
             self.blackboard.modify_entry(msg.entry, msg.entry_id)
         elif msg.action == DELETE:
             self.blackboard.del_entry(msg.entry_id)
 
-        self.vector_clock[self.id - 1] += 1
-        for svr_id in range(1, SERVER_COUNT):
-            if svr_id != self.id:
-                self.vector_clock[svr_id - 1] = max(self.vector_clock[svr_id - 1], msg.vector_clock[svr_id - 1])
+        with self.clock_lock:
+            self.vector_clock[self.id - 1] += 1
+            for svr_id in range(1, SERVER_COUNT):
+                if svr_id != self.id:
+                    self.vector_clock[svr_id - 1] = max(self.vector_clock[svr_id - 1], msg.vector_clock[svr_id - 1])
 
     # route to ('/')
     def index(self):
@@ -270,7 +253,7 @@ class Server(Bottle):
         try:
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
-            with self.lock:
+            with self.clock_lock:
                 self.vector_clock[self.id - 1] += 1
                 msg = Message(SUBMIT, self.vector_clock, self.id, new_entry)
             self.blackboard.add_entry(msg.entry)
@@ -288,7 +271,7 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             delete = request.forms.get('delete')
 
-            with self.lock:
+            with self.clock_lock:
                 self.vector_clock[self.id - 1] += 1
 
                 if delete == '1':
