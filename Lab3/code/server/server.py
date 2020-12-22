@@ -19,11 +19,27 @@ DELETE = 'delete'
 SERVER_COUNT = 8
 
 
+# TODO: modify, delete
+# TODO: entry class
+# TODO: out queue
+# TODO: entry history
+
+# ------------------------------------------------------------------------------------------------------
+class Entry:
+
+    def __init__(self, vector_clock: list, text: str):
+        self.vector_clock = vector_clock
+        self.text = text
+        self.log = list()
+
+
 # ------------------------------------------------------------------------------------------------------
 class Blackboard:
 
     def __init__(self):
         self.content = dict()
+
+        self.entries = list()
 
         self.clock_list = []
         self.entry_list = []
@@ -33,7 +49,9 @@ class Blackboard:
 
     def get_content(self) -> dict:
         with self.lock:
-            cnt = dict(zip(self.clock_list, self.entry_list))
+            text_list = [e.text for e in self.entries]
+            clock_list = [tuple(e.vector_clock) for e in self.entries]
+            cnt = dict(zip(clock_list, text_list))
         return cnt
 
     def add_content(self, new_entry: str) -> str:
@@ -43,34 +61,32 @@ class Blackboard:
             self.counter += 1
         return element_id
 
-    def set_content(self, index: str, new_content: str):
-        with self.lock:
-            self.content[int(index)] = new_content
-            self.counter = len(self.content)
-            # ordering the dict
-            self.content = collections.OrderedDict(sorted(self.content.items()))
+    def modify_entry(self, entry: Entry, index: str, ):
+
+        self.del_entry(index)
+        self.integrate_entry(entry)
         return
 
-    def del_content(self, index: str):
+    def del_entry(self, index: str):
         with self.lock:
-            self.content.pop(int(index))
-            self.counter = len(self.content)
+            self.entries.pop(int(index))
         return
 
-    def add_entry(self, clock, new_entry):
+    def add_entry(self, new_entry: Entry):
         with self.lock:
-            self.clock_list.append(tuple(clock))
-            self.entry_list.append(new_entry)
+            self.entries.append(new_entry)
         return
 
-    def integrate_entry(self, clock, new_entry):
+    def integrate_entry(self, entry: Entry):
+        clock = entry.vector_clock
+
         sum_arg = 0
         for element in clock:
             sum_arg += element
         with self.lock:
-            #index at which to insert clock and entry
-            index = len(self.clock_list)
-            for timestamp in reversed(self.clock_list):
+            # index at which to insert clock and entry
+            index = len(self.entries)
+            for timestamp in reversed([e.vector_clock for e in self.entries]):
                 sum = 0
                 for element in timestamp:
                     sum += element
@@ -91,28 +107,29 @@ class Blackboard:
                         elif clock[j] < timestamp[j]:
                             break
 
-            self.clock_list.insert(index, tuple(clock))
-            self.entry_list.insert(index, new_entry)
+            self.entries.insert(index, entry)
+
 
 # ------------------------------------------------------------------------------------------------------
 class Message:
 
-    def __init__(self, action, vector_clock, from_id, entry=None, entry_id=None):
+    def __init__(self, action: str, vector_clock: list, from_id: int, entry=None, entry_id=None):
+        vector_clock = vector_clock.copy()
         self.action = action
         self.vector_clock = vector_clock
-        self.entry = entry
+        self.entry = Entry(vector_clock, entry)
         self.entry_id = entry_id
         self.to_ip = None
         self.from_id = from_id
 
     def to_dict(self):
         return {'action': self.action, 'vector_clock': str(self.vector_clock),
-                'from_id': self.from_id, 'entry': self.entry, 'entry_id': self.entry_id}
+                'from_id': self.from_id, 'entry': self.entry.text, 'entry_id': self.entry_id}
 
     @staticmethod
     def request_to_msg(form: bottle.FormsDict):
         return Message(form.get('action'), json.loads(form.get('vector_clock').replace("'", '"')),
-                       form.get('from_id'), form.get('entry'), form.get('entry_id'))
+                       int(form.get('from_id')), form.get('entry'), form.get('entry_id'))
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -127,11 +144,11 @@ class Server(Bottle):
         self.id = int(ID)
         self.ip = str(IP)
         self.vector_clocks = {ip: 0 for ip in servers_list}
-        #self.out_msg = list()
+        # self.out_msg = list()
         # all messages that couldn't be delivered to its receiver
-        #self.in_msg = list()
+        # self.in_msg = list()
         # start method which tries to send undelivered messages
-        #self.do_parallel_task(self.send_msg_from_queue)
+        # self.do_parallel_task(self.send_msg_from_queue)
         self.vector_clock = [0] * 8
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
@@ -193,7 +210,7 @@ class Server(Bottle):
                 success = self.contact_another_server(srv_ip, URI, req, msg_dict)
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
-                    #msg.ip = srv_ip
+                    # msg.ip = srv_ip
 
     def send_msg_from_queue(self):
         while True:
@@ -201,7 +218,7 @@ class Server(Bottle):
             # try to send all messages in queue and delete all which could be delivered
             self.out_msg[:] = [msg for msg in self.out_msg
                                if not self.contact_another_server(
-                                srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
+                    srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict)]
 
     def process_msg(self, msg: Message):
         # TODO: implement queue
@@ -218,14 +235,16 @@ class Server(Bottle):
         msg = Message.request_to_msg(request.forms)
         if msg.action == SUBMIT:
             print(str(msg.vector_clock) + ' from ' + str(msg.from_id))
-            self.blackboard.integrate_entry(msg.vector_clock, msg.entry)
+            self.blackboard.integrate_entry(msg.entry)
         elif msg.action == MODIFY:
-            self.blackboard.set_content(msg.entry_id, msg.entry)
+            self.blackboard.modify_entry(msg.entry, msg.entry_id)
         elif msg.action == DELETE:
-            self.blackboard.del_content(msg.entry_id)
+            self.blackboard.del_entry(msg.entry_id)
 
         self.vector_clock[self.id - 1] += 1
-        self.vector_clock[int(msg.from_id) - 1] += 1
+        for svr_id in range(1, SERVER_COUNT):
+            if svr_id != self.id:
+                self.vector_clock[svr_id - 1] = max(self.vector_clock[svr_id - 1], msg.vector_clock[svr_id - 1])
 
     # route to ('/')
     def index(self):
@@ -233,7 +252,7 @@ class Server(Bottle):
         board = dict()
         board = self.blackboard.get_content()
         return template('server/templates/index.tpl',
-                        board_title='Server {} ({})'.format(self.id, self.ip),
+                        board_title='Server {} ({}) - {}'.format(self.id, self.ip, self.vector_clock),
                         board_dict=board.items(),
                         members_name_string='Lorenz Meierhofer and Tino Jeromin')
 
@@ -243,7 +262,7 @@ class Server(Bottle):
         board = dict()
         board = self.blackboard.get_content()
         return template('server/templates/blackboard.tpl',
-                        board_title='Server {} ({})'.format(self.id, self.ip),
+                        board_title='Server {} ({}) - {}'.format(self.id, self.ip, self.vector_clock),
                         board_dict=board.items())
 
     # post on ('/board')
@@ -252,10 +271,9 @@ class Server(Bottle):
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
             with self.lock:
-                self.vector_clock [self.id - 1] += 1
-                print("clock before packing: " + str(self.vector_clock))
+                self.vector_clock[self.id - 1] += 1
                 msg = Message(SUBMIT, self.vector_clock, self.id, new_entry)
-            self.blackboard.add_entry(self.vector_clock, new_entry)
+            self.blackboard.add_entry(msg.entry)
 
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_all_servers, args=('/propagate', 'POST', msg,))
@@ -270,15 +288,16 @@ class Server(Bottle):
             new_entry = request.forms.get('entry')
             delete = request.forms.get('delete')
 
-            if delete == '1':
-                action = DELETE
-                self.blackboard.del_content(element_id)
-            else:
-                action = MODIFY
-                self.blackboard.set_content(element_id, new_entry)
-            msg = Message(action, self.vector_clocks, self.ip, entry=new_entry, entry_id=element_id)
             with self.lock:
                 self.vector_clock[self.id - 1] += 1
+
+                if delete == '1':
+                    msg = Message(DELETE, self.vector_clock, self.id, entry=new_entry, entry_id=element_id)
+                    self.blackboard.del_entry(element_id)
+                else:
+                    msg = Message(MODIFY, self.vector_clock, self.id, entry=new_entry, entry_id=element_id)
+                    self.blackboard.modify_entry(msg.entry, element_id)
+
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate', 'POST', msg))
