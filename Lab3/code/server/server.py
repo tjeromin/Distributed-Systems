@@ -2,7 +2,7 @@
 import argparse
 import json
 import sys
-from threading import Lock, Thread
+from threading import Lock, Thread, RLock
 import time
 import traceback
 from typing import Any
@@ -19,14 +19,13 @@ DELETE = 'delete'
 SERVER_COUNT = 8
 
 
-# TODO: entry history
-
 # ------------------------------------------------------------------------------------------------------
 class Entry:
 
-    def __init__(self, vector_clock: list, text: str):
+    def __init__(self, vector_clock: list, text: str, action: str):
         self.vector_clock = vector_clock
         self.text = text
+        self.action = action
         self.log = list()
 
 
@@ -34,11 +33,15 @@ class Entry:
 class Blackboard:
 
     def __init__(self):
-        self.content = dict()
+        # list of type Entry
         self.entries = list()
+        # list of vector_clocks
         self.deleted = list()
+        # list of type tuple of (Entry, vector_clock)
+        self.to_be_applied = list()
         self.counter = 0
-        self.lock = Lock()  # use lock when you modify the content
+        # RLock, because it can be acquired multiple times by the same thread
+        self.lock = RLock()  # use lock when you modify the content
 
     def get_content(self) -> dict:
         with self.lock:
@@ -53,18 +56,78 @@ class Blackboard:
                 return i
         return -1
 
+    def search_logs(self, entry_clock: list) -> int:
+        for i in range(0, len(self.entries)):
+            for v in self.entries[i].log:
+                if entry_clock == v:
+                    return i
+        return -1
+
     def modify_entry(self, entry: Entry, entry_clock: list):
         with self.lock:
             index = self.get_index(entry_clock)
+            print('in modify_entry, index {}'.format(index))
+            # entry clock is a current vector clock of an entry
             if index >= 0:
                 entry.log = self.entries[index].log + self.entries[index].vector_clock
                 self.integrate_entry(entry)
+                print('after integrating')
+                self.entries.pop(index)
+                print(entry.log)
+            # entry clock is in the log of an entry
+            elif self.search_logs(entry_clock) >= 0:
+                index = self.search_logs(entry_clock)
+                new_entry_sum = 0
+                for element in entry_clock:
+                    new_entry_sum += element
+
+                current_clock = self.entries[index].vector_clock
+                current_entry_sum = 0
+                for element in current_clock:
+                    current_entry_sum += element
+
+                apply_new_entry = False
+
+                if new_entry_sum > current_entry_sum:
+                    apply_new_entry = True
+                elif new_entry_sum < current_entry_sum:
+                    apply_new_entry = False
+                else:
+                    for j in range(SERVER_COUNT):
+                        if entry_clock[j] == current_clock[j]:
+                            continue
+                        elif entry_clock[j] > current_clock[j]:
+                            apply_new_entry = True
+                            break
+                        elif entry_clock[j] < current_clock[j]:
+                            apply_new_entry = False
+                            break
+
+                if apply_new_entry:
+                    entry.log = self.entries[index].log + self.entries[index].vector_clock
+                    self.integrate_entry(entry)
+                    self.entries.pop(index)
+                else:
+                    self.entries[index].log.append(entry_clock)
+            # entry clock belongs to an entry which was deleted
+            elif entry_clock in self.deleted:
+                self.deleted.append(entry_clock)
+            # entry clock is neither the current vector clock or in the log of an entry
+            else:
+                self.to_be_applied.append((entry, entry_clock,))
         return
 
-    def del_entry(self, entry_clock: list):
-        index = self.get_index(entry_clock)
+    def del_entry(self, entry: Entry, entry_clock: list):
         with self.lock:
+            index = self.get_index(entry_clock)
+            if index < 0:
+                index = self.search_logs(entry_clock)
+                if index < 0:
+                    self.to_be_applied.append((entry, entry_clock))
+                    return
+
             self.deleted.append(self.entries[index])
+            self.deleted += self.entries[index].log
             self.entries.pop(index)
         return
 
@@ -109,11 +172,14 @@ class Blackboard:
 # ------------------------------------------------------------------------------------------------------
 class Message:
 
-    def __init__(self, action: str, vector_clock: list, from_id: int, entry=None, entry_clock=[]):
+    def __init__(self, action: str, vector_clock: list, from_id: int, entry=None, entry_clock=None):
+        if entry_clock is None:
+            entry_clock = []
         vector_clock = vector_clock.copy()
+        entry_clock = entry_clock.copy()
         self.action = action
         self.vector_clock = vector_clock
-        self.entry = Entry(vector_clock, entry)
+        self.entry = Entry(vector_clock, entry, action)
         self.entry_clock = entry_clock
         self.to_ip = None
         self.from_id = from_id
@@ -125,7 +191,8 @@ class Message:
     @staticmethod
     def request_to_msg(form: bottle.FormsDict):
         return Message(form.get('action'), json.loads(form.get('vector_clock').replace("'", '"')),
-                       int(form.get('from_id')), form.get('entry'), json.loads(form.get('entry_clock').replace("'", '"')))
+                       int(form.get('from_id')), form.get('entry'),
+                       json.loads(form.get('entry_clock').replace("'", '"')))
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -222,7 +289,7 @@ class Server(Bottle):
                     print('Trying to send {} messages that are currently in the queue...'.format(len(self.out_queue)))
                     self.out_queue[:] = [msg for msg in self.out_queue
                                          if not self.contact_another_server(
-                                            srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict())]
+                            srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict())]
 
     # post to ('/propagate')
     def post_propagate(self):
@@ -234,7 +301,7 @@ class Server(Bottle):
         elif msg.action == MODIFY:
             self.blackboard.modify_entry(msg.entry, msg.entry_clock)
         elif msg.action == DELETE:
-            self.blackboard.del_entry(msg.entry_clock)
+            self.blackboard.del_entry(msg.entry, msg.entry_clock)
 
         with self.clock_lock:
             self.vector_clock[self.id - 1] += 1
@@ -283,14 +350,16 @@ class Server(Bottle):
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
             delete = request.forms.get('delete')
-            entry_clock = self.blackboard.entries[element_id].vector_clock
+            with self.blackboard.lock:
+                entry_clock = self.blackboard.entries[element_id].vector_clock
 
+            print('modify/delete entryclock ' + str(entry_clock))
             with self.clock_lock:
                 self.vector_clock[self.id - 1] += 1
 
                 if delete == '1':
                     msg = Message(DELETE, self.vector_clock, self.id, entry=new_entry, entry_clock=entry_clock)
-                    self.blackboard.del_entry(entry_clock)
+                    self.blackboard.del_entry(msg.entry, entry_clock)
                 else:
                     msg = Message(MODIFY, self.vector_clock, self.id, entry=new_entry, entry_clock=entry_clock)
                     self.blackboard.modify_entry(msg.entry, entry_clock)
