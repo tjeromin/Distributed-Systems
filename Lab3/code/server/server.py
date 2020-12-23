@@ -62,10 +62,12 @@ class Blackboard:
                     return i
         return -1
 
-    def modify_entry(self, entry: Entry, entry_clock: list):
+    def modify_entry(self, entry: Entry, entry_clock: list, from_apply=False) -> bool:
+        success = False
+
         with self.lock:
             index = self.get_index(entry_clock)
-            print('in modify_entry, index {}'.format(index))
+
             # entry clock is a current vector clock of an entry
             if index >= 0:
                 entry.log = self.entries[index].log + self.entries[index].vector_clock
@@ -73,6 +75,7 @@ class Blackboard:
                 print('after integrating')
                 self.entries.pop(index)
                 print(entry.log)
+                success = True
             # entry clock is in the log of an entry
             elif self.search_logs(entry_clock) >= 0:
                 index = self.search_logs(entry_clock)
@@ -101,7 +104,7 @@ class Blackboard:
                         elif entry_clock[j] < current_clock[j]:
                             apply_new_entry = False
                             break
-
+                success = True
                 if apply_new_entry:
                     entry.log = self.entries[index].log + self.entries[index].vector_clock
                     self.integrate_entry(entry)
@@ -111,24 +114,49 @@ class Blackboard:
             # entry clock belongs to an entry which was deleted
             elif entry_clock in self.deleted:
                 self.deleted.append(entry_clock)
+                success = True
             # entry clock is neither the current vector clock or in the log of an entry
-            else:
+            elif not from_apply:
                 self.to_be_applied.append((entry, entry_clock,))
-        return
+        return success
 
-    def del_entry(self, entry: Entry, entry_clock: list):
+    def del_entry(self, entry: Entry, entry_clock: list, from_apply=False):
+        success = True
+
         with self.lock:
             index = self.get_index(entry_clock)
             if index < 0:
                 index = self.search_logs(entry_clock)
                 if index < 0:
-                    self.to_be_applied.append((entry, entry_clock))
-                    return
+                    success = False
+                    if not from_apply:
+                        self.to_be_applied.append((entry, entry_clock))
 
-            self.deleted.append(self.entries[index])
-            self.deleted += self.entries[index].log
-            self.entries.pop(index)
-        return
+            if success:
+                self.deleted.append(self.entries[index])
+                self.deleted += self.entries[index].log
+                self.entries.pop(index)
+        return success
+
+    def apply_entries_from_queue(self):
+        with self.lock:
+            apply_list = self.to_be_applied
+            self.to_be_applied = list()
+            not_applied = list()
+            for elem in apply_list:
+                entry = elem[0]
+                entry_clock = elem[1]
+
+                success = False
+                if entry.action == MODIFY:
+                    success = self.modify_entry(entry, entry_clock, from_apply=True)
+                else:
+                    success = self.del_entry(entry, entry_clock, from_apply=True)
+
+                if not success:
+                    not_applied.append(elem)
+
+            self.to_be_applied = not_applied
 
     def add_entry(self, new_entry: Entry):
         with self.lock:
@@ -166,6 +194,9 @@ class Blackboard:
                             break
 
             self.entries.insert(index, entry)
+
+        if len(self.to_be_applied) > 0:
+            self.apply_entries_from_queue()
 
 
 # ------------------------------------------------------------------------------------------------------
