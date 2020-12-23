@@ -47,15 +47,25 @@ class Blackboard:
             cnt = dict(zip(clock_list, text_list))
         return cnt
 
-    def modify_entry(self, entry: Entry, index: str, ):
+    def get_index(self, entry_clock: list) -> int:
+        for i in range(0, len(self.entries)):
+            if self.entries[i].vector_clock == entry_clock:
+                return i
+        return -1
 
-        self.del_entry(index)
-        self.integrate_entry(entry)
+    def modify_entry(self, entry: Entry, entry_clock: list):
+        with self.lock:
+            index = self.get_index(entry_clock)
+            if index >= 0:
+                entry.log = self.entries[index].log + self.entries[index].vector_clock
+                self.integrate_entry(entry)
         return
 
-    def del_entry(self, index: str):
+    def del_entry(self, entry_clock: list):
+        index = self.get_index(entry_clock)
         with self.lock:
-            self.entries.pop(int(index))
+            self.deleted.append(self.entries[index])
+            self.entries.pop(index)
         return
 
     def add_entry(self, new_entry: Entry):
@@ -99,23 +109,23 @@ class Blackboard:
 # ------------------------------------------------------------------------------------------------------
 class Message:
 
-    def __init__(self, action: str, vector_clock: list, from_id: int, entry=None, entry_id=None):
+    def __init__(self, action: str, vector_clock: list, from_id: int, entry=None, entry_clock=[]):
         vector_clock = vector_clock.copy()
         self.action = action
         self.vector_clock = vector_clock
         self.entry = Entry(vector_clock, entry)
-        self.entry_id = entry_id
+        self.entry_clock = entry_clock
         self.to_ip = None
         self.from_id = from_id
 
     def to_dict(self):
         return {'action': self.action, 'vector_clock': str(self.vector_clock),
-                'from_id': self.from_id, 'entry': self.entry.text, 'entry_id': self.entry_id}
+                'from_id': self.from_id, 'entry': self.entry.text, 'entry_clock': str(self.entry_clock)}
 
     @staticmethod
     def request_to_msg(form: bottle.FormsDict):
         return Message(form.get('action'), json.loads(form.get('vector_clock').replace("'", '"')),
-                       int(form.get('from_id')), form.get('entry'), form.get('entry_id'))
+                       int(form.get('from_id')), form.get('entry'), json.loads(form.get('entry_clock').replace("'", '"')))
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -128,6 +138,7 @@ class Server(Bottle):
         self.servers_list = servers_list
         self.id = int(ID)
         self.ip = str(IP)
+
         self.clock_lock = Lock()
         self.vector_clocks = {ip: 0 for ip in servers_list}
         # all messages that couldn't be delivered to its receiver
@@ -135,6 +146,7 @@ class Server(Bottle):
         self.queue_lock = Lock()
         self.do_parallel_task(self.send_msg_from_queue)
         self.vector_clock = [0] * 8
+
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.index)
@@ -148,7 +160,8 @@ class Server(Bottle):
         # You can have variables in the URI, here's an example self.post('/board/<element_id:int>/',
         # callback=self.post_board) where post_board takes an argument (integer) called element_id
 
-    def do_parallel_task(self, method, args=()):
+    @staticmethod
+    def do_parallel_task(method, args=()):
         # create a thread running a new task Usage example: self.do_parallel_task(self.contact_another_server,
         # args=("10.1.0.2", "/index", "POST", params_dict)) this would start a thread sending a post request to
         # server 10.1.0.2 with URI /index and with params params_dict
@@ -166,11 +179,13 @@ class Server(Bottle):
         thread.daemon = True
         thread.start()
 
-    def _wrapper_delay_and_execute(self, delay, method, args):
+    @staticmethod
+    def _wrapper_delay_and_execute(delay, method, args):
         time.sleep(delay)  # in sec
         method(*args)
 
-    def contact_another_server(self, srv_ip, URI, req='POST', params_dict=None):
+    @staticmethod
+    def contact_another_server(srv_ip, URI, req='POST', params_dict=None):
         # Try to contact another server through a POST or GET
         # usage: server.contact_another_server("10.1.1.1", "/index", "POST", params_dict)
         success = False
@@ -217,9 +232,9 @@ class Server(Bottle):
         if msg.action == SUBMIT:
             self.blackboard.integrate_entry(msg.entry)
         elif msg.action == MODIFY:
-            self.blackboard.modify_entry(msg.entry, msg.entry_id)
+            self.blackboard.modify_entry(msg.entry, msg.entry_clock)
         elif msg.action == DELETE:
-            self.blackboard.del_entry(msg.entry_id)
+            self.blackboard.del_entry(msg.entry_clock)
 
         with self.clock_lock:
             self.vector_clock[self.id - 1] += 1
@@ -268,16 +283,17 @@ class Server(Bottle):
             # we read the POST form, and check for an element called 'entry'
             new_entry = request.forms.get('entry')
             delete = request.forms.get('delete')
+            entry_clock = self.blackboard.entries[element_id].vector_clock
 
             with self.clock_lock:
                 self.vector_clock[self.id - 1] += 1
 
                 if delete == '1':
-                    msg = Message(DELETE, self.vector_clock, self.id, entry=new_entry, entry_id=element_id)
-                    self.blackboard.del_entry(element_id)
+                    msg = Message(DELETE, self.vector_clock, self.id, entry=new_entry, entry_clock=entry_clock)
+                    self.blackboard.del_entry(entry_clock)
                 else:
-                    msg = Message(MODIFY, self.vector_clock, self.id, entry=new_entry, entry_id=element_id)
-                    self.blackboard.modify_entry(msg.entry, element_id)
+                    msg = Message(MODIFY, self.vector_clock, self.id, entry=new_entry, entry_clock=entry_clock)
+                    self.blackboard.modify_entry(msg.entry, entry_clock)
 
             print("Received: {}".format(new_entry))
             self.do_parallel_task(self.propagate_to_all_servers,
@@ -285,7 +301,8 @@ class Server(Bottle):
         except Exception as e:
             print("[ERROR] " + str(e))
 
-    def get_template(self, filename):
+    @staticmethod
+    def get_template(filename):
         return static_file(filename, root='./server/templates/')
 
 
