@@ -1,5 +1,6 @@
 # coding=utf-8
 import argparse
+import copy
 import json
 import sys
 from threading import Lock, Thread, RLock
@@ -10,8 +11,6 @@ from typing import Any
 import bottle
 from bottle import Bottle, request, template, run, static_file
 import requests
-import random
-import collections
 
 SUBMIT = 'submit'
 MODIFY = 'modify'
@@ -270,31 +269,33 @@ class Server(Bottle):
             print("[ERROR] " + str(e))
         return success
 
-    def propagate_to_all_servers(self, URI='/propagate', req='POST', msg=Message):
+    def propagate_to_all_servers(self, URI='/propagate', req='POST', msg=None):
         for srv_ip in self.servers_list:
             if srv_ip != self.ip:  # don't propagate to yourself
+                msg.to_ip = srv_ip
                 success = self.contact_another_server(srv_ip, URI, req, msg.to_dict())
                 if not success:
                     print("[WARNING ]Could not contact server {}".format(srv_ip))
-                    msg.to_ip = srv_ip
                     with self.queue_lock:
-                        self.out_queue.append(msg)
+                        self.out_queue.append(copy.copy(msg))
 
     def send_msg_from_queue(self):
         while True:
             time.sleep(3)
-            if len(self.out_queue) > 0:
+            n = len(self.out_queue)
+            if n > 0:
                 # try to send all messages in queue and delete all which could be delivered
                 with self.queue_lock:
                     print('Trying to send {} messages that are currently in the queue...'.format(len(self.out_queue)))
                     self.out_queue[:] = [msg for msg in self.out_queue
                                          if not self.contact_another_server(
                             srv_ip=msg.to_ip, URI='/propagate', req='POST', params_dict=msg.to_dict())]
+                print('Sent {} messages from the queue.'.format(n - len(self.out_queue)))
 
     # post to ('/propagate')
     def post_propagate(self):
         msg = Message.request_to_msg(request.forms)
-        print(str(msg.vector_clock) + ' from ' + str(msg.from_id))
+        print(str(msg.vector_clock) + ' from ' + str(msg.from_id) + ' (' + msg.action + ')')
 
         if msg.action == SUBMIT:
             self.blackboard.integrate_entry(msg.entry)
