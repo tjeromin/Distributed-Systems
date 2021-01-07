@@ -72,9 +72,7 @@ class Blackboard:
             if index >= 0:
                 entry.log = self.entries[index].log + self.entries[index].vector_clock
                 self.integrate_entry(entry)
-                print('after integrating')
                 self.entries.pop(index)
-                print(entry.log)
                 success = True
             # entry clock is in the log of an entry
             elif self.search_logs(entry_clock) >= 0:
@@ -133,7 +131,7 @@ class Blackboard:
                         self.to_be_applied.append((entry, entry_clock))
 
             if success:
-                self.deleted.append(self.entries[index])
+                self.deleted.append(self.entries[index].vector_clock)
                 self.deleted += self.entries[index].log
                 self.entries.pop(index)
         return success
@@ -312,7 +310,7 @@ class Server(Bottle):
 
     def send_msg_from_queue(self):
         while True:
-            time.sleep(3)
+            time.sleep(1)
             n = len(self.out_queue)
             if n > 0:
                 # try to send all messages in queue and delete all which could be delivered
