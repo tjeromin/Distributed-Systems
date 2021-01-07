@@ -70,21 +70,29 @@ class Blackboard:
 
             # entry clock is a current vector clock of an entry
             if index >= 0:
-                entry.log = self.entries[index].log + self.entries[index].vector_clock
-                self.integrate_entry(entry)
+                print('To be modified vector clock {} is a current vector clock of an entry.'.format(entry_clock))
+                entry.log = self.entries[index].log
+                entry.log.append(self.entries[index].vector_clock)
                 self.entries.pop(index)
+                self.integrate_entry(entry)
+                print(entry.log)
                 success = True
             # entry clock is in the log of an entry
             elif self.search_logs(entry_clock) >= 0:
+                print('To be modified vector clock {} is in the log of an entry.'.format(entry_clock))
                 index = self.search_logs(entry_clock)
+
+                new_entry_clock = entry.vector_clock
                 new_entry_sum = 0
-                for element in entry_clock:
+                for element in new_entry_clock:
                     new_entry_sum += element
 
                 current_clock = self.entries[index].vector_clock
                 current_entry_sum = 0
                 for element in current_clock:
                     current_entry_sum += element
+
+                print('new: {} | old: {}'.format(new_entry_sum, current_entry_sum))
 
                 apply_new_entry = False
 
@@ -94,27 +102,31 @@ class Blackboard:
                     apply_new_entry = False
                 else:
                     for j in range(SERVER_COUNT):
-                        if entry_clock[j] == current_clock[j]:
+                        if new_entry_clock[j] == current_clock[j]:
                             continue
-                        elif entry_clock[j] > current_clock[j]:
+                        elif new_entry_clock[j] > current_clock[j]:
                             apply_new_entry = True
                             break
-                        elif entry_clock[j] < current_clock[j]:
+                        elif new_entry_clock[j] < current_clock[j]:
                             apply_new_entry = False
                             break
                 success = True
+                print('apply new {}'.format(apply_new_entry))
                 if apply_new_entry:
-                    entry.log = self.entries[index].log + self.entries[index].vector_clock
-                    self.integrate_entry(entry)
+                    entry.log = self.entries[index].log
+                    entry.log.append(self.entries[index].vector_clock)
                     self.entries.pop(index)
+                    self.integrate_entry(entry)
                 else:
                     self.entries[index].log.append(entry_clock)
             # entry clock belongs to an entry which was deleted
             elif entry_clock in self.deleted:
+                print('To be modified vector clock {} is a vector clock of an deleted entry.'.format(entry_clock))
                 self.deleted.append(entry_clock)
                 success = True
             # entry clock is neither the current vector clock or in the log of an entry
             elif not from_apply:
+                print('To be modified vector clock {} couldn\'t be found.'.format(entry_clock))
                 self.to_be_applied.append((entry, entry_clock,))
         return success
 
@@ -335,7 +347,7 @@ class Server(Bottle):
 
         with self.clock_lock:
             self.vector_clock[self.id - 1] += 1
-            for svr_id in range(1, SERVER_COUNT):
+            for svr_id in range(1, SERVER_COUNT + 1):
                 if svr_id != self.id:
                     self.vector_clock[svr_id - 1] = max(self.vector_clock[svr_id - 1], msg.vector_clock[svr_id - 1])
 
@@ -383,7 +395,7 @@ class Server(Bottle):
             with self.blackboard.lock:
                 entry_clock = self.blackboard.entries[element_id].vector_clock
 
-            print('modify/delete entryclock ' + str(entry_clock))
+            print('modify/delete entry with clock ' + str(entry_clock))
             with self.clock_lock:
                 self.vector_clock[self.id - 1] += 1
 
