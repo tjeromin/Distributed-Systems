@@ -116,7 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--nb-servers',
                         nargs='?',
                         dest='nb_srv',
-                        default=8,
+                        default=4,
                         type=int,
                         help='The number of servers that should be running. Default is 8.')
     parser.add_argument('--script',
