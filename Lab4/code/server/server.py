@@ -1,21 +1,34 @@
 # coding=utf-8
 import argparse
-import json
-import sys
+import byzantine_behavior
 from threading import Lock, Thread
 import time
 import bottle
 from bottle import Bottle, request, template, run, static_file
 import requests
 
+# constants for a given experiment
+no_loyal = 3
+no_total = 4
+on_tie = True
+
+
 # ------------------------------------------------------------------------------------------------------
 class Server(Bottle):
 
     def __init__(self, ID, IP, servers_list):
         super(Server, self).__init__()
+        print("serverslist")
+        print(servers_list)
         self.id = int(ID)
         self.ip = str(IP)
         self.servers_list = servers_list
+
+        self.vote_counter = 0
+        self.vote_vector = [False] * (no_total - 1)
+
+        # identity of node, determined by pressed button (in respective post method)
+        self.legitimate = True
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.home)
@@ -23,6 +36,9 @@ class Server(Bottle):
         self.post('/vote/attack', callback=self.post_attack)
         self.post('/vote/retreat', callback=self.post_retreat)
         self.post('/vote/byzantine', callback=self.post_byzantine)
+        self.post('/propagate/round1', callback=self.post_propagate1)
+        self.post('/propagate/round2', callback=self.post_propagate2)
+
         # we give access to the templates elements
         self.get('/templates/<filename:path>', callback=self.get_template)
         # You can have variables in the URI, here's an example
@@ -86,19 +102,58 @@ class Server(Bottle):
     def get_vote(self):
         return template('server/templates/vote_result_template.tpl', s="is this the string?")
 
+    # post to ('/propagate/round1')
+    def post_propagate1(self):
+        self.vote_counter += 1
+        vote = request.forms.get('vote')
+        from_id = request.forms.get('id')
+        self.vote_vector[from_id - 1] = vote
+        if self.vote_counter == (no_total - 1) and self.legitimate:
+            self.do_parallel_task(self.propagate_to_all_servers,
+                                  args=('/propagate/round2', 'POST',
+                                        {'vote_vector': self.vote_vector, 'id': self.id}))
+
+    # post to ('/propagate/round2')
+    def post_propagate2(self):
+        vote = request.forms.get('vote')
+        from_id = request.forms.get('id')
+        self.vote_vector[from_id] = vote
 
     def post_attack(self):
-        print("attack!!!!!!!!!!!!!!!!!!!!!!!!!")
+        vote = True
+        self.vote_vector[self.id - 1] = vote
+        self.do_parallel_task(self.propagate_to_all_servers,
+                              args=('/propagate/round1', 'POST',
+                                    {'vote': vote, 'id': self.id}))
 
     def post_retreat(self):
-        print("retreat!!!!!!!!!!!!!!!!!!!!!!!!!")
+        vote = False
+        self.vote_vector[self.id - 1] = vote
+        self.do_parallel_task(self.propagate_to_all_servers,
+                              args=('/propagate/round1', 'POST',
+                                    {'vote': vote, 'id': self.id}))
 
     def post_byzantine(self):
-        print("byzantine!!!!!!!!!!!!!!!!!!!!!!!!!")
+        self.legitimate = False
+        # byzantine node has to wait until it has gotten all votes to successfully manipulate
+        while len(self.vote_vector) < 3:
+            time.sleep(1)
+        vote_list = byzantine_behavior.compute_byzantine_vote_round1(no_loyal, no_total, on_tie)
+        for server_no in range(no_loyal):
+            self.do_parallel_task(self.contact_another_server,
+                                  args=(self.servers_list[server_no],
+                                        '/propagate/round1', 'POST',
+                                        {'vote': vote_list[server_no]}))
+
+        vector_list = byzantine_behavior.compute_byzantine_vote_round2(no_loyal, no_total, on_tie)
+        for server_no in range(no_loyal):
+            self.do_parallel_task(self.contact_another_server,
+                                  args=(self.servers_list[server_no],
+                                        '/propagate/round2', 'POST',
+                                        {'vote_vector': vector_list[server_no], 'id': self.id}))
 
     def get_template(self, filename):
         return static_file(filename, root='./server/templates/')
-
 
 
 # ------------------------------------------------------------------------------------------------------
