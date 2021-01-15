@@ -116,14 +116,14 @@ if __name__ == '__main__':
     parser.add_argument('--nb-servers',
                         nargs='?',
                         dest='nb_srv',
-                        default=8,
+                        default=4,
                         type=int,
-                        help='The number of servers that should be running. Default is 8.')
+                        help='The number of servers that should be running. Default is 4.')
     parser.add_argument('--script',
                         nargs='?',
                         dest='pth_srv',
-                        default='server/server.py',
-                        help='The relative path to your server implementation. Default is ./server/server.py')
+                        default='server.py',
+                        help='The relative path to your server implementation. Default is server.py')
     args = parser.parse_args()
     nb_of_servers = int(args.nb_srv)
     server_path = args.pth_srv
