@@ -11,6 +11,7 @@ import requests
 no_loyal = 3
 no_total = 4
 on_tie = True
+k = 1
 
 
 # ------------------------------------------------------------------------------------------------------
@@ -27,8 +28,13 @@ class Server(Bottle):
         self.vote_counter = 0
         self.vote_vector = [False] * (no_total - 1)
 
+        self.index_list = []
+        self.vector_list = []
+
         # identity of node, determined by pressed button (in respective post method)
         self.legitimate = True
+
+        self.result_string = ""
         # list all REST URIs
         # if you add new URIs to the server, you need to add them here
         self.route('/', callback=self.home)
@@ -100,7 +106,7 @@ class Server(Bottle):
 
     # get on ('/vote/result')
     def get_vote(self):
-        return template('server/templates/vote_result_template.tpl', s="is this the string?")
+        return template('server/templates/vote_result_template.tpl', s=self.result_string)
 
     # post to ('/propagate/round1')
     def post_propagate1(self):
@@ -115,9 +121,47 @@ class Server(Bottle):
 
     # post to ('/propagate/round2')
     def post_propagate2(self):
-        vote = request.forms.get('vote')
+        vector = request.forms.get('vote_vector')
         from_id = request.forms.get('id')
-        self.vote_vector[from_id] = vote
+
+        # need index_list to reference the vote that needs to be canceled in a row (because the
+        # vector_list (a list of lists) could be unordered, so we can't use the index of that list)
+        self.index_list.append(from_id - 1)
+        self.vector_list.append(vector)
+        if len(self.vector_list) == (no_total - 1):
+            # append own vote vector, table complete
+            self.vector_list.append(self.vote_vector)
+            self.index_list.append(self.id - 1)
+
+            # the actual, filtered, correct and consistent vector, whose vote majority makes the final decision
+            result_vector = []
+
+            # filtering for the original vote from each node
+            for i in range(no_total):
+                attack_vote_counter = 0
+                for j in range(no_total):
+                    if vector_list[j][i]:
+                        # ignore the diagonal by canceling the value at the referenced index
+                        if index_list[j] == i:
+                            continue
+                        attack_vote_counter += 1
+                result_vector.append(attack_vote_counter >= (no_loyal - k))
+
+            # calculating majority in result vector
+            attack_vote_counter = 0
+            for b in result_vector:
+                if b:
+                    attack_vote_counter += 1
+
+            # final result based on the tying value (on_tie)
+            if(on_tie):
+                result = attack_vote_counter >= (no_total + 1) / 2
+            else:
+                result = attack_vote_counter > (no_total + 1) / 2
+
+            # string to be displayed on screen
+            self.result_string = "result vector: " + result_vector + "\nresult: " + result
+
 
     def post_attack(self):
         vote = True
