@@ -82,9 +82,9 @@ class Server(Bottle):
                                                             self.ip),
                         members_name_string='INPUT YOUR NAME HERE')
 
-    # get on ('/board')
+    # get on ('/vote/result')
     def get_vote(self):
-        return template('server/templates/vote_frontpage_template.html')
+        return template('server/templates/vote_result_template.tpl', s="is this the string?")
 
 
     def post_attack(self):
