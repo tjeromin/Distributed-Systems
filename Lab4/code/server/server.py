@@ -6,6 +6,7 @@ import time
 import bottle
 from bottle import Bottle, request, template, run, static_file
 import requests
+import json
 
 # constants for a given experiment
 no_loyal = 3
@@ -25,8 +26,7 @@ class Server(Bottle):
         self.ip = str(IP)
         self.servers_list = servers_list
 
-        self.vote_counter = 0
-        self.vote_vector = [False] * (no_total - 1)
+        self.vote_vector = [False] * no_total
 
         self.index_list = []
         self.vector_list = []
@@ -110,17 +110,16 @@ class Server(Bottle):
 
     # post to ('/propagate/round1')
     def post_propagate1(self):
-        self.vote_counter += 1
         vote = request.forms.get('vote')
         from_id = request.forms.get('id')
 
         print("vote: " + vote)
         print("from_id: " + str(from_id))
 
-        self.vote_vector[from_id - 1] = vote
-        print("vector: " + self.vote_vector)
+        self.vote_vector[int(from_id) - 1] = json.loads(vote.lower())
+        print("vector: " + str(self.vote_vector))
         # wait until all votes arrive before sending out the vectors
-        if self.vote_counter == (no_total - 1) and self.legitimate:
+        if len(self.vote_vector) == (no_total - 1) and self.legitimate:
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate/round2', 'POST',
                                         {'vote_vector': self.vote_vector, 'id': self.id}))
