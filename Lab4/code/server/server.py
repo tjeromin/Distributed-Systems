@@ -148,7 +148,7 @@ class Server(Bottle):
 
     # post to ('/propagate/round2')
     def post_propagate2(self):
-        print("hhhhhhhhhhhhhhhheeeeeeeeeeeeeeeeeeeeeeeeeeeelo")
+        # c
         vector = request.forms.get('vote_vector')
         from_id = request.forms.get('id')
 
