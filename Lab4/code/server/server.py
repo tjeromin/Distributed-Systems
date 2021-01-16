@@ -113,7 +113,13 @@ class Server(Bottle):
         self.vote_counter += 1
         vote = request.forms.get('vote')
         from_id = request.forms.get('id')
+
+        print("vote: " + vote)
+        print("from_id: " + str(from_id))
+
         self.vote_vector[from_id - 1] = vote
+        print("vector: " + self.vote_vector)
+        # wait until all votes arrive before sending out the vectors
         if self.vote_counter == (no_total - 1) and self.legitimate:
             self.do_parallel_task(self.propagate_to_all_servers,
                                   args=('/propagate/round2', 'POST',
@@ -163,6 +169,7 @@ class Server(Bottle):
             self.result_string = "result vector: " + result_vector + "\nresult: " + result
 
 
+    # makes a node an honest general
     def post_attack(self):
         vote = True
         self.vote_vector[self.id - 1] = vote
@@ -170,6 +177,7 @@ class Server(Bottle):
                               args=('/propagate/round1', 'POST',
                                     {'vote': vote, 'id': self.id}))
 
+    # makes a node an honest general
     def post_retreat(self):
         vote = False
         self.vote_vector[self.id - 1] = vote
@@ -177,11 +185,14 @@ class Server(Bottle):
                               args=('/propagate/round1', 'POST',
                                     {'vote': vote, 'id': self.id}))
 
+    # makes a node a byzantine general
     def post_byzantine(self):
         self.legitimate = False
         # byzantine node has to wait until it has gotten all votes to successfully manipulate
-        while len(self.vote_vector) < 3:
+        while len(self.vote_vector) < (no_total - 1):
             time.sleep(1)
+
+        #computing and sending the byzantine votes
         vote_list = byzantine_behavior.compute_byzantine_vote_round1(no_loyal, no_total, on_tie)
         for server_no in range(no_loyal):
             self.do_parallel_task(self.contact_another_server,
@@ -189,6 +200,7 @@ class Server(Bottle):
                                         '/propagate/round1', 'POST',
                                         {'vote': vote_list[server_no]}))
 
+        #computing and sending the byzantine vectors
         vector_list = byzantine_behavior.compute_byzantine_vote_round2(no_loyal, no_total, on_tie)
         for server_no in range(no_loyal):
             self.do_parallel_task(self.contact_another_server,
