@@ -73,7 +73,7 @@ class Server(Bottle):
         method(*args)
 
     def contact_another_server(self, srv_ip, URI, req='POST', params_dict=None):
-        # Try to contact another serverthrough a POST or GET
+        # Try to contact another server through a POST or GET
         # usage: server.contact_another_server("10.1.1.1", "/index", "POST", params_dict)
         success = False
         try:
@@ -98,7 +98,7 @@ class Server(Bottle):
 
     # route to ('/')
     def home(self):
-        # we must transform the blackboard as a dict for compatiobility reasons
+        # we must transform the blackboard as a dict for compatibility reasons
         return template('server/templates/vote_frontpage_template.html',
                         board_title='Server {} ({})'.format(self.id,
                                                             self.ip),
@@ -137,8 +137,9 @@ class Server(Bottle):
                 # computing and sending the byzantine vectors
                 vector_list = byzantine_behavior.compute_byzantine_vote_round2(no_loyal, no_total, on_tie)
                 own_id_passed = 0
-                for server_no in range(no_loyal):
-                    if server_no == self.id:    # byzantine sends fabricated vectors not to itself
+                for server_no in range(no_total):
+                    if (server_no + 1) == self.id:    # byzantine sends fabricated vectors not to itself
+                        own_id_passed += 1
                         continue
                     self.do_parallel_task(self.contact_another_server,
                                           args=(self.servers_list[server_no],
@@ -148,7 +149,6 @@ class Server(Bottle):
 
     # post to ('/propagate/round2')
     def post_propagate2(self):
-        # c
         vector = request.forms.get('vote_vector')
         from_id = request.forms.get('id')
 
@@ -183,7 +183,6 @@ class Server(Bottle):
                     attack_vote_counter += 1
 
             # final result based on the tying value (on_tie)
-            print('attackvotecounter: ' + str(attack_vote_counter))
             if (on_tie):
                 result = attack_vote_counter >= int((no_total + 1) / 2)
             else:

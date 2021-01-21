@@ -14,6 +14,8 @@ def compute_byzantine_vote_round1(no_loyal,no_total,on_tie):
 
   result_vote = []
   for i in range(0,no_loyal):
+    # use only next line to show that byzantine node can break algorithm with 3 nodes
+    #result_vote.append(not on_tie)
     if i%2==0:
       result_vote.append(not on_tie)
     else:
